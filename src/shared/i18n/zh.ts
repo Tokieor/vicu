@@ -1347,6 +1347,7 @@ export const ZH: Record<string, string> = {
   "Task Parser": "任务解析",
   "Task Reminders": "任务提醒",
   "Task actions": "任务操作",
+  "Task added": "已添加任务",
   "Task created, but some details failed. Retry will not create another task.": "任务已创建，但部分详情失败。重试不会重复创建任务。",
   "Task info": "任务信息",
   "Task item checkbox for {0}": "任务项复选框：{0}",

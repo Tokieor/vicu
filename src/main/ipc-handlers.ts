@@ -124,7 +124,7 @@ import {
   getLastShortcutStatus,
 } from './quick-entry-state'
 import { getAPIToken, getOidcSignInMode, getProviderKey, getSecretStorageStatus, storeAPIToken, API_TOKEN_NO_EXPIRY } from './auth/token-store'
-import { sendTestNotification, rescheduleNotifications, refreshTaskRemindersSoon, refreshRoutineReminders } from './notifications'
+import { sendTestNotification, rescheduleNotifications, refreshTaskRemindersSoon, refreshRoutineReminders, notifyTaskSavedFromQuickEntry } from './notifications'
 import { setTaskBadge, clearTaskBadge } from './badge'
 import { resolveShownObsidianLink, testObsidianConnection } from './obsidian-client'
 import { isRegistered, registerHosts } from './browser-host-registration'
@@ -726,6 +726,8 @@ export function registerIpcHandlers(): void {
     if (config.standalone_mode) {
       const task = addStandaloneTask(title, description, dueDate)
       notifyViewerSync()
+      // Quick Entry's window closes on success, so the toast is the only feedback (the same as below).
+      notifyTaskSavedFromQuickEntry({ title, dueDate, taskId: null, queued: false })
       return { success: true, task, data: task }
     }
 
@@ -735,10 +737,20 @@ export function registerIpcHandlers(): void {
     // The create is queued with everything the user set when the server cannot be reached; see
     // createFromQuickEntry for what may be queued and why.
     const result = await createFromQuickEntry(quickActionDeps(), targetProjectId, taskPayload, extras)
+    const createdId = ('data' in result ? result.data as { id?: unknown } | undefined : undefined)?.id
+    if (result.success) {
+      // A queued create says so in the toast instead of claiming it reached the server.
+      notifyTaskSavedFromQuickEntry({
+        title,
+        dueDate,
+        taskId: typeof createdId === 'number' ? createdId : null,
+        queued: 'cached' in result,
+      })
+    }
     if (result.success && !('cached' in result)) {
       notifyViewerSync()
       // "When I get home" for a saved place: the reminder goes on the server id (contract 5.3).
-      const reminder = quickEntryLocationReminder(('data' in result ? result.data as { id?: unknown } | undefined : undefined)?.id, extras?.location)
+      const reminder = quickEntryLocationReminder(createdId, extras?.location)
       if (reminder) setSyncedPreference(reminder.key, reminder.value)
     }
     return result

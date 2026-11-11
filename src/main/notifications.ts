@@ -18,6 +18,8 @@ import { addLocalDays, startOfLocalDay, toLocalDate } from '../shared/due-dates'
 import { isSharedRoutine, parseRoutineEnvelope, routineOccurrenceKey, scheduledDateOn, type RoutinePayload } from '../shared/routines'
 import { isPlannerEnabled, isRoutinesEnabled } from '../shared/config-types'
 import { getLocale, t } from '../shared/i18n'
+import { savedTaskNotice } from '../shared/saved-task-notice'
+import { currentDateFormat } from './date-format'
 
 const NULL_DATE = '0001-01-01T00:00:00Z'
 
@@ -191,6 +193,29 @@ export function sendTestNotification(): void {
     icon: getIcon(),
   })
   attachNotificationDiagnostics(notification, 'test notification')
+  notification.show()
+}
+
+/**
+ * The confirmation Quick Entry shows after a create went through: that window closes the moment
+ * the task exists, so this toast is the only sign of what happened. It confirms something the user
+ * just did rather than reminding them of anything, so it does not wait on the reminders switch
+ * (which is off by default) and it stays silent — feedback, not an alarm. Clicking it opens the
+ * task in the main window.
+ */
+export function notifyTaskSavedFromQuickEntry(task: { title: string; dueDate: string | null; taskId: number | null; queued: boolean }): void {
+  const notice = savedTaskNotice(task, currentDateFormat())
+  const notification = new Notification({
+    title: notice.title,
+    body: notice.body,
+    silent: true,
+    icon: getIcon(),
+  })
+  attachNotificationDiagnostics(notification, `quick entry saved (${task.taskId ?? 'queued'})`)
+  notification.on('click', () => {
+    showMainWindow()
+    if (task.taskId !== null) mainWindowRef?.webContents.send('navigate-to-task', task.taskId)
+  })
   notification.show()
 }
 

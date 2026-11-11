@@ -808,5 +808,6 @@
   "{0} failed — open Vicu to review": "{0} 项失败 —— 打开 Vicu 查看",
   "No reminder": "不提醒",
   "Next Monday": "下周一",
-  "A reminder needs a due date.": "提醒需要一个到期时间。"
+  "A reminder needs a due date.": "提醒需要一个到期时间。",
+  "Task added": "已添加任务"
 }
