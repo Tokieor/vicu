@@ -698,7 +698,7 @@ export function SettingsView() {
                   <div className="mb-2 block text-xs text-[var(--text-secondary)]">
                     Syntax Mode
                   </div>
-                  <div role="radiogroup" className="grid grid-cols-2 gap-3">
+                  <div role="radiogroup" className="grid grid-cols-3 gap-3">
                     <button
                       type="button"
                       role="radio"
@@ -743,6 +743,28 @@ export function SettingsView() {
                         <code className="text-danger">!1-!4</code>
                       </p>
                     </button>
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={fullConfig?.nlp_syntax_mode === 'zh'}
+                      onClick={() => handleQuickEntryChange({ nlp_syntax_mode: 'zh' })}
+                      className={cn(
+                        'cursor-pointer rounded-card border p-3 text-left transition-colors',
+                        fullConfig?.nlp_syntax_mode === 'zh'
+                          ? 'border-accent-blue bg-accent-blue/5'
+                          : 'border-[var(--border-color)]'
+                      )}
+                    >
+                      <div className="text-sm font-medium text-[var(--text-primary)]">Chinese</div>
+                      <p className="mt-0.5 text-xs text-[var(--text-secondary)]">
+                        Chinese dates and times
+                      </p>
+                      <p className="mt-1.5 font-mono text-xs">
+                        <code className="text-green-600">明天</code>{' '}
+                        <code className="text-green-600">下午3点</code>{' '}
+                        <code className="text-green-600">周三</code>
+                      </p>
+                    </button>
                   </div>
                 </div>
 
@@ -762,11 +784,11 @@ export function SettingsView() {
                   </div>
                 </label>
 
-                {/* 中文时间解析（lib/task-parser/zh-dates.ts）：给一行示例，完整规则在模块注释里 */}
+                {/* 中文解析是「中文」模式独有的：说明放在三种模式下面，讲清依赖关系 */}
                 <div className="rounded-control border border-[var(--border-color)] bg-[var(--bg-secondary)] p-3">
                   <div className="text-xs font-medium text-[var(--text-primary)]">Chinese dates and times</div>
                   <p className="mt-1 text-xs text-[var(--text-secondary)]">
-                    Also read from Chinese: 今天 / 明天 / 后天, 周三 / 下周一, 今天下午3点, 明天12:30, 晚上8点半.
+                    Read only in Chinese mode: 今天 / 明天 / 后天, 周三 / 下周一, 今天下午3点, 明天12:30, 晚上8点半. The prefixes stay the Todoist ones (#project @label p1-p4); Todoist and Vikunja modes leave Chinese words in the title.
                   </p>
                 </div>
               </>

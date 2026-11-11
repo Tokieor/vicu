@@ -72,7 +72,7 @@ interface QuickEntryConfig {
   project_cycle_modifier: string
   standalone_mode: boolean
   nlp_enabled: boolean
-  nlp_syntax_mode: 'todoist' | 'vikunja'
+  nlp_syntax_mode: 'todoist' | 'vikunja' | 'zh'
 }
 
 import { blockFields, parse, getParserConfig, recurrenceToVikunja, extractBangToday } from '../lib/task-parser'

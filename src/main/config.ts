@@ -245,7 +245,7 @@ export function normalizeConfig(raw: Record<string, unknown>): AppConfig {
     hotkeys_migrated_macos: raw.hotkeys_migrated_macos === true,
     // NLP task parser
     nlp_enabled: raw.nlp_enabled !== false,
-    nlp_syntax_mode: raw.nlp_syntax_mode === 'vikunja' ? 'vikunja' : 'todoist',
+    nlp_syntax_mode: raw.nlp_syntax_mode === 'vikunja' || raw.nlp_syntax_mode === 'zh' ? raw.nlp_syntax_mode : 'todoist',
     confirm_before_delete: raw.confirm_before_delete !== false,
     subtask_display: raw.subtask_display === 'expandable' ? 'expandable' : 'inside_task',
     // Task completion sound

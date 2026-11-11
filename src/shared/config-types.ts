@@ -361,7 +361,8 @@ export interface AppConfig {
   hotkeys_migrated_macos?: boolean
   // NLP task parser
   nlp_enabled?: boolean
-  nlp_syntax_mode?: 'todoist' | 'vikunja'
+  /** 语法模式三选一：`zh` 是中文日期与时刻，另两种只读英文。 */
+  nlp_syntax_mode?: 'todoist' | 'vikunja' | 'zh'
   // Delete confirmation
   confirm_before_delete?: boolean
   // Subtask presentation in task lists

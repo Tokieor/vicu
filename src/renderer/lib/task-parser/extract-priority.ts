@@ -4,7 +4,8 @@ import type { ParsedToken, SyntaxMode } from './types'
  * Extract priority from input text.
  * - Todoist mode: p1 (urgent) through p4 (low) — word boundary enforced
  * - Vikunja mode: !1 through !4 — word boundary enforced
- * - Shared: !urgent/!critical, !high, !medium/!med, !low (both modes)
+ * - Chinese mode (`zh`): the Todoist p1-p4 set (its prefixes are the Todoist ones)
+ * - Shared: !urgent/!critical, !high, !medium/!med, !low (every mode)
  *
  * Priority mapping:
  *   Todoist p1 / !urgent → Vikunja 4 (urgent)
@@ -52,8 +53,8 @@ export function extractPriority(
     return { priority, tokens }
   }
 
-  if (mode === 'todoist') {
-    // Todoist: p1-p4 with word boundary
+  if (mode !== 'vikunja') {
+    // Todoist 风格（Todoist 与中文模式共用）：p1-p4，要求词边界
     const re = /(?:^|(?<=\s))p([1-4])(?=\s|$)/g
     while ((match = re.exec(input)) !== null) {
       const start = match.index

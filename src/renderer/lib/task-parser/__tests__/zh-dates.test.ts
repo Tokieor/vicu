@@ -6,6 +6,8 @@ import { DEFAULT_PARSER_CONFIG, parse } from '../index'
 import { parseChineseNumber, parseZhClock, parseZhDate } from '../zh-dates'
 
 const NOW = new Date(2026, 10, 11, 9, 0, 0)
+// 中文语法是「中文」模式独有的；DEFAULT_PARSER_CONFIG 是 Todoist，读不出中文。
+const ZH = { enabled: true, syntaxMode: 'zh' } as const
 const day = (date: Date | null) => (date ? toLocalDate(date) : null)
 const clock = (date: Date | null) => (date ? `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}` : null)
 
@@ -199,7 +201,7 @@ describe('无法识别与过去表达', () => {
 
   it('被其它解析器消费的区域不会重复解析', () => {
     // 标签、优先级先被摘走，日期解析只看剩下的文本。
-    const result = parse('开会 @work p2 明天下午3点', DEFAULT_PARSER_CONFIG, NOW)
+    const result = parse('开会 @work p2 明天下午3点', ZH, NOW)
     expect(result.labels).toEqual(['work'])
     expect(result.priority).toBe(3)
     expect(result.title).toBe('开会')
@@ -226,7 +228,7 @@ describe('只解析时刻（When 面板的自定义时间）', () => {
 
 describe('接进任务解析与文本选择', () => {
   it('标题里的中文时间被摘出来，剩下的进标题', () => {
-    const result = parse('明天下午3点开会', DEFAULT_PARSER_CONFIG, NOW)
+    const result = parse('明天下午3点开会', ZH, NOW)
     expect(result.title).toBe('开会')
     expect(day(result.dueDate)).toBe('2026-11-12')
     expect(clock(result.dueDate)).toBe('15:00')
@@ -235,7 +237,7 @@ describe('接进任务解析与文本选择', () => {
   })
 
   it('日期与标签、优先级同时出现', () => {
-    const result = parse('今天18:00 交周报 @work p2', DEFAULT_PARSER_CONFIG, NOW)
+    const result = parse('今天18:00 交周报 @work p2', ZH, NOW)
     expect(result.title).toBe('交周报')
     expect(day(result.dueDate)).toBe('2026-11-11')
     expect(clock(result.dueDate)).toBe('18:00')
@@ -244,7 +246,7 @@ describe('接进任务解析与文本选择', () => {
   })
 
   it('只写日期时是全天（hasTime = false）', () => {
-    const result = parse('后天 买菜', DEFAULT_PARSER_CONFIG, NOW)
+    const result = parse('后天 买菜', ZH, NOW)
     expect(result.title).toBe('买菜')
     expect(day(result.dueDate)).toBe('2026-11-13')
     expect(result.dueHasTime).toBe(false)
@@ -258,32 +260,54 @@ describe('接进任务解析与文本选择', () => {
   })
 
   it('中文句子中间的时间照样摘掉', () => {
-    const result = parse('明天上午十点半和张总开会', DEFAULT_PARSER_CONFIG, NOW)
+    const result = parse('明天上午十点半和张总开会', ZH, NOW)
     expect(result.title).toBe('和张总开会')
     expect(day(result.dueDate)).toBe('2026-11-12')
     expect(clock(result.dueDate)).toBe('10:30')
   })
 
   it('没有时间信息的中文原样留在标题里', () => {
-    const result = parse('写周报', DEFAULT_PARSER_CONFIG, NOW)
+    const result = parse('写周报', ZH, NOW)
     expect(result.title).toBe('写周报')
     expect(result.dueDate).toBeNull()
+  })
+
+  it('另外两种语法模式一个字都不读中文', () => {
+    for (const mode of ['todoist', 'vikunja'] as const) {
+      const result = parse('明天下午3点开会', { enabled: true, syntaxMode: mode }, NOW)
+      expect(result.title, mode).toBe('明天下午3点开会')
+      expect(result.dueDate, mode).toBeNull()
+      expect(result.tokens, mode).toEqual([])
+    }
   })
 })
 
 describe('When 面板的文本输入', () => {
   it('parseWhenText 读中文日期与时刻', () => {
-    const hit = parseWhenText('明天下午3点', NOW)
+    const hit = parseWhenText('明天下午3点', NOW, undefined, null, true)
     expect(hit?.value).toEqual({ date: '2026-11-12', time: '15:00' })
-    expect(parseWhenText('今天十二点十分', NOW)?.value).toEqual({ date: '2026-11-11', time: '12:10' })
-    expect(parseWhenText('后天', NOW)?.value).toEqual({ date: '2026-11-13', time: null })
+    expect(parseWhenText('今天十二点十分', NOW, undefined, null, true)?.value).toEqual({ date: '2026-11-11', time: '12:10' })
+    expect(parseWhenText('后天', NOW, undefined, null, true)?.value).toEqual({ date: '2026-11-13', time: null })
   })
 
   it('parseTimeText 读中文时刻，英文写法照旧', () => {
-    expect(parseTimeText('三点半')).toBe('03:30')
-    expect(parseTimeText('下午3点')).toBe('15:00')
-    expect(parseTimeText('晚上8点')).toBe('20:00')
+    expect(parseTimeText('三点半', true)).toBe('03:30')
+    expect(parseTimeText('下午3点', true)).toBe('15:00')
+    expect(parseTimeText('晚上8点', true)).toBe('20:00')
     expect(parseTimeText('15:30')).toBe('15:30')
     expect(parseTimeText('3pm')).toBe('15:00')
+  })
+
+  it('关掉中文语法后，手打的中文既不算日期也不算时刻', () => {
+    expect(parseWhenText('明天下午3点', NOW)).toBeNull()
+    expect(parseWhenText('明天下午3点', NOW, undefined, null, false)).toBeNull()
+    expect(parseTimeText('三点半')).toBeNull()
+    expect(parseTimeText('三点半', false)).toBeNull()
+  })
+
+  it('面板自己写的中文文本一定读得回来（与开关无关）', () => {
+    // 中文界面写的是「今天，11月11日，13:05」；关掉中文语法后改时间再回车，日期不能丢。
+    expect(parseWhenText('今天，11月11日，13:05', NOW, 'zh-CN', '2026-11-11')?.value).toEqual({ date: '2026-11-11', time: '13:05' })
+    expect(parseWhenText('明天，11月12日，09:00', NOW, 'zh-CN', '2026-11-12')?.value).toEqual({ date: '2026-11-12', time: '09:00' })
   })
 })

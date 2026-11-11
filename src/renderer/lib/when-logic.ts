@@ -62,11 +62,14 @@ export function timeLabel(time: string, fmt: DateFormat): string {
 /**
  * A time typed by hand: "15:30", "3pm", "3:30 pm", "7" (an hour on its own is read on the 24-hour
  * clock, "7pm" is 19:00). Also reads the Chinese forms this app ships with: "3点半", "三点一刻",
- * "下午3点", "晚上8点". Returns "HH:mm" or null.
+ * "下午3点", "晚上8点" — but only when `zhGrammar` is on (Chinese syntax mode), like every other
+ * Chinese form. Returns "HH:mm" or null.
  */
-export function parseTimeText(text: string): string | null {
-  const zh = parseZhClock(text)
-  if (zh) return zh
+export function parseTimeText(text: string, zhGrammar = false): string | null {
+  if (zhGrammar) {
+    const zh = parseZhClock(text)
+    if (zh) return zh
+  }
   const match = /^\s*(\d{1,2})(?:[:.h](\d{2}))?\s*([ap])?\.?m?\.?\s*$/i.exec(text)
   if (!match) return null
   let hour = Number(match[1])
@@ -250,13 +253,20 @@ export interface WhenParse {
  * "oct 20 at 3pm"). A phrase that names no time gives a date-only value. Null when the text has no
  * date in it. Typed text here is nothing but a date, so "3 days" means that, unlike in a task's title.
  * `previous` is the day the text showed before the edit (see `dayWordPhrase`).
+ * `zhGrammar` 为真时才读中文（中文语法模式）；默认关，与任务文本解析的那一个开关同源。
  */
-export function parseWhenText(text: string, now: Date, locale?: string, previous?: LocalDate | null): WhenParse | null {
+export function parseWhenText(
+  text: string,
+  now: Date,
+  locale?: string,
+  previous?: LocalDate | null,
+  zhGrammar = false,
+): WhenParse | null {
   if (!text.trim()) return null
   const normalized = normalizePunctuation(text)
   const phrase = dayWordPhrase(normalized, now, locale, previous ?? null)
   if (phrase) return { ...phrase, matched: text.trim() }
-  const found = extractDate(normalized, [], { reference: now, locale, bareAmounts: true })
+  const found = extractDate(normalized, [], { reference: now, locale, bareAmounts: true, zhGrammar })
   if (!found.dueDate) return null
   const date = toLocalDate(found.dueDate)
   const time = found.hasTime ? `${pad2(found.dueDate.getHours())}:${pad2(found.dueDate.getMinutes())}` : null
@@ -290,6 +300,9 @@ const DAY_WORD_OFFSET: Record<string, number> = {
  * so editing the time and pressing Enter cleared it (vicu-android issue 98). Read as one value
  * here: the time from what follows the word, and the day from the word, unless the word still
  * names `previous` and the date after it was changed. Null when the text is not of that form.
+ *
+ * 这里的 `zhGrammar: true` 是故意的：这段文本是面板自己写出来的（中文界面就是「今天，10月7日，
+ * 13:00」），不是用户输入，必须能原样读回去 —— 否则关掉中文语法后改个时间再回车就把日期丢了。
  */
 function dayWordPhrase(text: string, now: Date, locale: string | undefined, previous: LocalDate | null): WhenParse | null {
   const match = DAY_WORD_RE.exec(text)
@@ -298,7 +311,7 @@ function dayWordPhrase(text: string, now: Date, locale: string | undefined, prev
   const word = addLocalDays(today, DAY_WORD_OFFSET[match[1].toLowerCase()])
   // A date before today is read from the word's day, so "Yesterday, Oct 7" stays this year.
   const reference = word < today ? startOfLocalDay(word) : now
-  const rest = extractDate(match[2], [], { reference, locale, skipTimeOnly: true })
+  const rest = extractDate(match[2], [], { reference, locale, skipTimeOnly: true, zhGrammar: true })
   if (!rest.dueDate) return null
   const restDate = toLocalDate(rest.dueDate)
   const date = previous !== null && word === previous && restDate !== previous ? restDate : word

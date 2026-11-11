@@ -3,6 +3,8 @@ import { t } from '@/lib/i18n'
 import { cn } from '@/lib/cn'
 import { toLocalDate, type LocalDate } from '@/lib/due-dates'
 import { useDateFormat } from '@/hooks/use-date-format'
+import { useParserConfig } from '@/hooks/use-parser-config'
+import { readsChineseDates } from '@/lib/task-parser'
 import { MonthCalendar } from './MonthCalendar'
 import {
   TIME_CHOICES,
@@ -38,6 +40,8 @@ interface WhenPanelProps {
  */
 export function WhenPanel({ value, onChange, now: nowProp }: WhenPanelProps) {
   const fmt = useDateFormat()
+  // 中文只在「中文」语法模式下读，与任务文本解析用同一个开关（设置页的语法模式）。
+  const zhGrammar = readsChineseDates(useParserConfig().syntaxMode)
   const [opened] = useState(() => new Date())
   const now = nowProp ?? opened
   const today = toLocalDate(now)
@@ -69,7 +73,7 @@ export function WhenPanel({ value, onChange, now: nowProp }: WhenPanelProps) {
 
   const onText = (raw: string) => {
     setText(raw)
-    const parsed = parseWhenText(raw, now, fmt.locale, value.date)
+    const parsed = parseWhenText(raw, now, fmt.locale, value.date, zhGrammar)
     setTyped(parsed ? parsed.value : null)
     if (parsed?.value.date) showDay(parsed.value.date)
   }
@@ -93,7 +97,7 @@ export function WhenPanel({ value, onChange, now: nowProp }: WhenPanelProps) {
       setCustomInvalid(false)
       return
     }
-    const time = parseTimeText(customTime)
+    const time = parseTimeText(customTime, zhGrammar)
     setCustomInvalid(time === null)
     if (time === null) return
     setCustomTime('')

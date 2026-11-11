@@ -503,3 +503,38 @@ Both apps implement fuzzy matching for autocomplete:
 - Label prefix typed → dropdown of all labels from `GET /api/v2/labels`
 - Match by substring, case-insensitive
 - Cache lists (refresh every 60s or on window focus)
+
+---
+
+## Desktop extension: the `zh` syntax mode (Chinese grammar)
+
+> Desktop only. Vicu Android implements `todoist` and `vikunja`; it ignores `zh`.
+
+`SyntaxMode` on the desktop has a third value:
+
+```typescript
+type SyntaxMode = 'todoist' | 'vikunja' | 'zh'
+```
+
+| | `todoist` | `vikunja` | `zh` |
+|---|---|---|---|
+| Label / project / priority prefixes | `@label` `#project` `p1-p4` | `*label` `+project` `!1-!4` | `@label` `#project` `p1-p4` (Todoist style) |
+| Chinese dates and times (`明天下午3点`) | not read — stays in the title | not read — stays in the title | read (`src/renderer/lib/task-parser/zh-dates.ts`) |
+| English dates (`tomorrow 9am`) | read | read | read |
+
+The three modes are **mutually exclusive**: `nlp_syntax_mode` stores exactly one of them, so choosing
+Chinese turns the other two off and choosing either of them turns Chinese off. Chinese parsing has no
+setting of its own — `readsChineseDates(mode)` is the single switch, and it is `mode === 'zh'`.
+
+Where the switch applies (desktop):
+
+- `parse()` → `extractDate({ zhGrammar })`; with `zhGrammar` false the Chinese parser is never tried,
+  so `明天` / `周三` / `下午3点` are ordinary words and stay in the title.
+- The When panel: typed text (`parseWhenText`) and the custom time field (`parseTimeText`) read
+  Chinese only with `zhGrammar` on.
+- The one exception is the When panel's own text: in a Chinese UI it writes `今天，10月7日，13:05`,
+  and that text is read back with the Chinese parser whatever the mode, otherwise editing the time
+  and pressing Enter would drop the date (vicu-android issue 98).
+
+`ParserConfig` itself is unchanged (no new field): the mode carries the switch, so a config written
+by either app still means the same thing to the other.

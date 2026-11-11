@@ -761,6 +761,8 @@
 
   "Chinese dates and times": "中文日期与时间",
   "Also read from Chinese: 今天 / 明天 / 后天, 周三 / 下周一, 今天下午3点, 明天12:30, 晚上8点半.": "支持中文写法：今天 / 明天 / 后天、周三 / 下周一、今天下午3点、明天12:30、晚上8点半。",
+  "Chinese": "中文",
+  "Read only in Chinese mode: 今天 / 明天 / 后天, 周三 / 下周一, 今天下午3点, 明天12:30, 晚上8点半. The prefixes stay the Todoist ones (#project @label p1-p4); Todoist and Vikunja modes leave Chinese words in the title.": "仅在「中文」模式下解析：今天 / 明天 / 后天、周三 / 下周一、今天下午3点、明天12:30、晚上8点半。前缀沿用 Todoist 风格（#项目 @标签 p1-p4）；选 Todoist 或 Vikunja 时中文原样留在标题里。",
 
   "Schedule date": "安排日期",
   ", new": "（新）",

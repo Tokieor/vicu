@@ -49,6 +49,14 @@ describe('parseTimeText', () => {
       expect(parseTimeText(text), text).toBeNull()
     }
   })
+
+  // 中文时刻是「中文」语法模式独有的：开关关着时「3点半」不是时间。
+  it('reads Chinese clock forms only when Chinese grammar is on', () => {
+    expect(parseTimeText('3点半')).toBeNull()
+    expect(parseTimeText('3点半', true)).toBe('03:30')
+    expect(parseTimeText('下午3点', true)).toBe('15:00')
+    expect(parseTimeText('下午3点')).toBeNull()
+  })
 })
 
 describe('value and due date', () => {
@@ -186,6 +194,18 @@ describe('text to selection', () => {
     expect(parseWhenText('   ', NOW)).toBeNull()
     expect(parseWhenText('buy milk', NOW)).toBeNull()
     expect(parseWhenText('weekend', NOW)).toBeNull()
+  })
+
+  // 中文语法是「中文」模式独有的：开关关着时，手打的中文不算日期。
+  it('reads a Chinese date typed by hand only when Chinese grammar is on', () => {
+    expect(parseWhenText('明天下午3点', NOW, 'zh-CN')).toBeNull()
+    expect(parseWhenText('明天下午3点', NOW, 'zh-CN', null, true)!.value).toEqual({ date: '2026-10-08', time: '15:00' })
+  })
+
+  // 但面板自己写出来的中文文本必须能读回去，与开关无关：否则中文界面下改个时间再回车会丢日期。
+  it('reads back its own Chinese text even with Chinese grammar off', () => {
+    expect(parseWhenText('今天，10月7日，13:05', NOW, 'zh-CN', '2026-10-07')!.value).toEqual({ date: '2026-10-07', time: '13:05' })
+    expect(parseWhenText('明天，10月12日，09:00', NOW, 'zh-CN', '2026-10-08')!.value).toEqual({ date: '2026-10-12', time: '09:00' })
   })
 
   it('what the panel writes for a pick reads back as the same pick', () => {

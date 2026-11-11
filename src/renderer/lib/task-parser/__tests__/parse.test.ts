@@ -591,3 +591,67 @@ describe('for', () => {
     expect(getParserConfig({}).suppressTypes).toBeUndefined()
   })
 })
+
+// ─── 中文语法模式（语法模式三选一，互斥） ────────────────────
+//
+// 中文语法解析是「中文」模式独有的：Todoist / Vikunja 模式下中文一个字也不算日期，
+// 原样留在标题里。这里的用例就是这个开关的契约。
+
+describe('Chinese syntax mode', () => {
+  const zh: ParserConfig = { enabled: true, syntaxMode: 'zh' }
+  // 2026-11-11 周三 09:00 本地时间：明天是 11-12
+  const now = new Date(2026, 10, 11, 9, 0, 0)
+
+  it('reads a Chinese date and time in Chinese mode', () => {
+    const r = parse('明天下午3点开会', zh, now)
+    expect(r.title).toBe('开会')
+    expect(r.dueHasTime).toBe(true)
+    expect([r.dueDate!.getMonth() + 1, r.dueDate!.getDate(), r.dueDate!.getHours()]).toEqual([11, 12, 15])
+  })
+
+  it('keeps the Todoist prefixes in Chinese mode', () => {
+    const r = parse('明天下午3点开会 @work #home p2', zh, now)
+    expect(r.title).toBe('开会')
+    expect(r.labels).toEqual(['work'])
+    expect(r.project).toBe('home')
+    expect(r.priority).toBe(3) // p2 → 高
+    expect(r.dueDate!.getDate()).toBe(12)
+  })
+
+  it('reads no Chinese date in Todoist mode', () => {
+    const r = parse('明天下午3点开会', todoist, now)
+    expect(r.dueDate).toBeNull()
+    expect(r.tokens).toEqual([])
+    expect(r.title).toBe('明天下午3点开会')
+  })
+
+  it('reads no Chinese date in Vikunja mode', () => {
+    const r = parse('明天下午3点开会 *work', vikunja, now)
+    expect(r.dueDate).toBeNull()
+    expect(r.title).toBe('明天下午3点开会')
+    expect(r.labels).toEqual(['work'])
+  })
+
+  it('leaves "周三" in the title outside Chinese mode', () => {
+    expect(parse('周三交报告', todoist, now).title).toBe('周三交报告')
+    const r = parse('周三交报告', zh, now)
+    expect(r.title).toBe('交报告')
+    // 今天就是周三，所以「周三」= 今天
+    expect([r.dueDate!.getMonth() + 1, r.dueDate!.getDate()]).toEqual([11, 11])
+  })
+
+  it('still reads English dates in Chinese mode', () => {
+    const r = parse('Call tomorrow 3pm', zh, now)
+    expect(r.title).toBe('Call')
+    expect(r.dueDate!.getDate()).toBe(12)
+    expect(r.dueDate!.getHours()).toBe(15)
+  })
+
+  it('maps the config field to the mode, defaulting anything else to Todoist', () => {
+    expect(getParserConfig({ nlp_syntax_mode: 'zh' }).syntaxMode).toBe('zh')
+    expect(getParserConfig({ nlp_syntax_mode: 'vikunja' }).syntaxMode).toBe('vikunja')
+    expect(getParserConfig({ nlp_syntax_mode: 'todoist' }).syntaxMode).toBe('todoist')
+    expect(getParserConfig({}).syntaxMode).toBe('todoist')
+    expect(getParserConfig({ nlp_syntax_mode: 'bogus' as never }).syntaxMode).toBe('todoist')
+  })
+})

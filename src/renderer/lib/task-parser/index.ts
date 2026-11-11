@@ -1,5 +1,5 @@
 import type { ParseResult, ParserConfig, ParsedToken } from './types'
-import { DEFAULT_PARSER_CONFIG, getPrefixes } from './types'
+import { DEFAULT_PARSER_CONFIG, getPrefixes, readsChineseDates } from './types'
 import { extractLabels } from './extract-labels'
 import { extractProject } from './extract-projects'
 import { extractPriority } from './extract-priority'
@@ -11,7 +11,7 @@ import { matchPlacePhrase, type PlaceRef } from './place-phrases'
 import { isTimeBlock } from '../../../shared/time-blocks'
 
 export type { ParseResult, ParserConfig, ParsedToken, ParsedRecurrence, SyntaxMode, TokenType, SyntaxPrefixes } from './types'
-export { DEFAULT_PARSER_CONFIG, getPrefixes } from './types'
+export { DEFAULT_PARSER_CONFIG, getPrefixes, readsChineseDates } from './types'
 export { recurrenceToVikunja } from './recurrence-map'
 export { getParserConfig } from './config-bridge'
 export { extractBangToday } from './extract-dates'
@@ -117,7 +117,13 @@ export function parse(
   }
 
   // 5. Dates
-  const dateOptions = { reference, locale: config.locale, hidden: forPhrases.hidden }
+  //    中文日期只在「中文」语法模式下读（readsChineseDates），另两种模式不碰中文。
+  const dateOptions = {
+    reference,
+    locale: config.locale,
+    hidden: forPhrases.hidden,
+    zhGrammar: readsChineseDates(config.syntaxMode),
+  }
   if (!suppress.has('date')) {
     let found: ReturnType<typeof extractDate> | null = null
     if (weekday) {

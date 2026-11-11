@@ -1,6 +1,14 @@
 import type { PlaceMatch } from './place-phrases'
 
-export type SyntaxMode = 'todoist' | 'vikunja'
+/**
+ * 语法模式，三选一：
+ * - `todoist`：Todoist 风格前缀（`#项目` `@标签` `p1-p4`），只读英文日期；
+ * - `vikunja`：Vikunja 风格前缀（`+项目` `*标签` `!1-!4`），只读英文日期；
+ * - `zh`：中文日期与时刻（`明天` `下午3点` `周三`），前缀沿用 Todoist 风格。
+ *
+ * 中文解析是 `zh` 独有的：另两种模式下中文一律留在标题里，不会被当成日期。
+ */
+export type SyntaxMode = 'todoist' | 'vikunja' | 'zh'
 
 /**
  * `place` is "when I get home" for a saved place (section 5.3), read only when the caller passes
@@ -64,10 +72,20 @@ export interface ParserConfig {
 const SYNTAX_PREFIXES: Record<SyntaxMode, SyntaxPrefixes> = {
   todoist: { label: '@', project: '#' },
   vikunja: { label: '*', project: '+' },
+  // 中文模式只换日期语法，前缀沿用 Todoist 风格：中文用户最熟的写法，也不必再学一套。
+  zh: { label: '@', project: '#' },
 }
 
 export function getPrefixes(mode: SyntaxMode): SyntaxPrefixes {
   return SYNTAX_PREFIXES[mode]
+}
+
+/**
+ * 是否读取中文日期与时刻。只有 `zh` 模式为真：这是「中文语法解析」的唯一开关，
+ * 日期解析（extract-dates）与 When 面板的时刻输入都问它。
+ */
+export function readsChineseDates(mode: SyntaxMode): boolean {
+  return mode === 'zh'
 }
 
 export const DEFAULT_PARSER_CONFIG: ParserConfig = {
