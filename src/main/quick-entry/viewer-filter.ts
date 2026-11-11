@@ -1,0 +1,123 @@
+import type { ViewerFilter } from '../config'
+import type { CustomList } from '../../shared/config-types'
+import { filterCustomList, type CustomListContext, type CustomListTask } from '../../shared/custom-list-filter'
+import { sortCustomListTasks, type CustomListSortable } from '../../shared/custom-list-sort'
+import { isUpcoming, toLocalDate } from '../../shared/due-dates'
+import { withoutNestedSubtasks } from '../../shared/nested-subtasks'
+import { blockStartsOn, type BlockFields } from '../../shared/time-blocks'
+
+export interface ResolvedViewerFilter {
+  filter: ViewerFilter
+  /** True when the viewer points at a custom list (which filters before hiding subtasks). */
+  fromCustomList: boolean
+}
+
+/**
+ * The filter Quick View actually applies. A viewer that points at a custom list takes that
+ * list's conditions, including exclude mode, include_done, include_overdue, priorities, labels
+ * and the collaboration and activity conditions. A plain filter stays as configured; its "today from all projects" option keeps meaning
+ * tasks due exactly today (it has no overdue setting, and always has).
+ */
+export function resolveViewerFilter(
+  viewerFilter: ViewerFilter,
+  customLists: CustomList[] | undefined,
+): ResolvedViewerFilter {
+  const list = viewerFilter.custom_list_id
+    ? customLists?.find((entry) => entry.id === viewerFilter.custom_list_id)
+    : undefined
+
+  if (list) {
+    const { filter } = list
+    return {
+      fromCustomList: true,
+      filter: {
+        project_ids: filter.project_ids ?? [],
+        project_filter_mode: filter.project_filter_mode,
+        sort_by: filter.sort_by,
+        order_by: filter.order_by,
+        due_date_filter: filter.due_date_filter,
+        include_today_all_projects: filter.include_today_all_projects,
+        include_done: filter.include_done,
+        include_overdue: filter.include_overdue,
+        priority_filter: filter.priority_filter,
+        label_ids: filter.label_ids,
+        assigned: filter.assigned,
+        comments: filter.comments,
+        shared_only: filter.shared_only,
+        changed_within_days: filter.changed_within_days,
+        rule: filter.rule,
+        rule_include_nulls: filter.rule_include_nulls,
+        then_by: filter.then_by,
+      },
+    }
+  }
+
+  if (viewerFilter.include_today_all_projects) {
+    return { filter: { ...viewerFilter, include_overdue: false }, fromCustomList: false }
+  }
+  return { filter: viewerFilter, fromCustomList: false }
+}
+
+export interface SelectViewerTasksOptions {
+  now?: Date
+  /** The configured Inbox project; "anytime" leaves it out, like the main Anytime view. */
+  inboxProjectId?: number
+  /** Who you are and which projects are shared, for a custom list's collaboration conditions. */
+  context?: CustomListContext
+}
+
+/**
+ * The exact rule of the viewer filter, applied to what the (superset) server query returned.
+ * Built-in views: Today is open tasks due today or earlier, Upcoming open tasks due tomorrow or
+ * later, Anytime all open tasks except the Inbox. Everything else is the shared custom-list
+ * evaluator, so a list shows the same tasks here and in the main window.
+ */
+export function selectViewerTasks<T extends CustomListTask>(
+  tasks: T[],
+  viewerFilter: ViewerFilter,
+  options: SelectViewerTasksOptions = {},
+): T[] {
+  const now = options.now ?? new Date()
+  const today = toLocalDate(now)
+
+  switch (viewerFilter.view_type) {
+    case 'today': {
+      // Today also holds a time block starting today (section 16.4); custom lists read the due date only.
+      const dueToday = new Set(filterCustomList(tasks, { due_date_filter: 'today' }, today))
+      return tasks.filter((task) => dueToday.has(task) || (!task.done && blockStartsOn(task as BlockFields, today)))
+    }
+    case 'upcoming':
+      return tasks.filter((task) => !task.done && isUpcoming(task.due_date, now))
+    case 'anytime':
+      return tasks.filter((task) => !task.done && !(options.inboxProjectId && task.project_id === options.inboxProjectId))
+    default:
+      return filterCustomList(tasks, viewerFilter, today, options.context)
+  }
+}
+
+export interface SelectQuickViewTasksOptions<T> extends SelectViewerTasksOptions {
+  /** Extra conditions (archived projects, hidden metadata tasks), applied before subtasks are hidden. */
+  keep?: (task: T) => boolean
+}
+
+/**
+ * What the Quick View shows for a fetch: the exact viewer rule, then `keep`, then (for a custom
+ * list only) the list's sort is applied and nested subtasks are hidden. A list fetches the
+ * un-nested set and filters first, so a matching subtask whose parent does not match is still
+ * shown (cross-app semantics v1, 3.2). Plain filters and built-in views arrive already de-nested
+ * by the fetch.
+ */
+export function selectQuickViewTasks<T extends CustomListTask & CustomListSortable>(
+  tasks: T[],
+  resolved: ResolvedViewerFilter,
+  options: SelectQuickViewTasksOptions<T> = {},
+): T[] {
+  const selected = selectViewerTasks(tasks, resolved.filter, options)
+  const kept = options.keep ? selected.filter(options.keep) : selected
+  if (!resolved.fromCustomList) return kept
+  // A custom list has its own sort, applied here like the main window does: tasks without the
+  // date last in both directions and ties in the order they came in. Plain filters keep the
+  // order the server (or the position fetch) gave.
+  const sorted = sortCustomListTasks(kept, resolved.filter.sort_by, resolved.filter.order_by, resolved.filter.then_by ?? [])
+  return withoutNestedSubtasks(sorted, { hideChildrenOfCompletedParents: false })
+}

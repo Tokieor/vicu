@@ -1,0 +1,295 @@
+import { useRef, useState, useCallback, useEffect } from 'react'
+import { extractBangToday } from '@/lib/task-parser'
+import type { ParseResult, ParserConfig, TokenType, SyntaxPrefixes } from '@/lib/task-parser'
+import { NlpInputHighlight } from '@/components/task-list/NlpInputHighlight'
+import { TokenChip } from './TokenChip'
+import { parseChips, type ChipData } from '@/lib/parse-chips'
+import { AutocompleteDropdown } from './AutocompleteDropdown'
+import type { AutocompleteAria, AutocompleteHandle } from './AutocompleteDropdown'
+import { cn } from '@/lib/cn'
+import { useDateFormat } from '@/hooks/use-date-format'
+
+interface AutocompleteItem {
+  id: number
+  title: string
+}
+
+interface TaskInputParserProps {
+  value: string
+  onChange: (value: string) => void
+  onSubmit: () => void
+  onCancel: () => void
+  onTab?: () => void
+  parseResult: ParseResult | null
+  parserConfig: ParserConfig
+  onSuppressType: (type: TokenType) => void
+  prefixes: SyntaxPrefixes
+  enabled: boolean
+  projects: AutocompleteItem[]
+  labels: AutocompleteItem[]
+  inputRef?: React.Ref<HTMLInputElement | HTMLTextAreaElement>
+  placeholder?: string
+  onBlur?: (e: React.FocusEvent) => void
+  showBangTodayHint?: boolean
+  className?: string
+  inputClassName?: string
+  multiline?: boolean
+  /** Extra chips injected by the parent (e.g. context-based "Today" default). */
+  contextChips?: ChipData[]
+  /** Chips to show instead of the ones read from the parse (the composer shows what it will save). */
+  chips?: ChipData[]
+  /** Dismiss of a chip passed in `chips`; without it the chip is dismissed by suppressing its type. */
+  onDismissChip?: (chip: ChipData) => void
+  onDismissContextChip?: (key: string) => void
+}
+
+export function TaskInputParser({
+  value,
+  onChange,
+  onSubmit,
+  onCancel,
+  onTab,
+  parseResult,
+  parserConfig,
+  onSuppressType,
+  prefixes,
+  enabled,
+  projects,
+  labels,
+  inputRef,
+  placeholder,
+  onBlur,
+  showBangTodayHint,
+  className,
+  inputClassName,
+  multiline = false,
+  contextChips,
+  chips: chipsOverride,
+  onDismissChip,
+  onDismissContextChip,
+}: TaskInputParserProps) {
+  const dateFormat = useDateFormat()
+  const autocompleteRef = useRef<AutocompleteHandle>(null)
+  const internalInputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null)
+  const [inputElement, setInputElement] = useState<HTMLInputElement | HTMLTextAreaElement | null>(null)
+  const [listAria, setListAria] = useState<AutocompleteAria | null>(null)
+  const [cursorPosition, setCursorPosition] = useState(0)
+  const [isComposing, setIsComposing] = useState(false)
+  const pendingSubmitRef = useRef(false)
+  const autocompleteSelectedRef = useRef(false)
+
+  // When autocomplete accepts a selection on Enter, the onChange state update
+  // is async in React — parseResult won't reflect the new value yet.
+  // Defer submit until parseResult updates.
+  useEffect(() => {
+    if (pendingSubmitRef.current) {
+      pendingSubmitRef.current = false
+      onSubmit()
+    }
+  }, [parseResult, onSubmit])
+
+  // Merge refs — expose internal ref to parent via inputRef prop
+  const setRefs = useCallback(
+    (el: HTMLInputElement | HTMLTextAreaElement | null) => {
+      ;(internalInputRef as React.MutableRefObject<HTMLInputElement | HTMLTextAreaElement | null>).current = el
+      setInputElement(el)
+      if (typeof inputRef === 'function') {
+        inputRef(el)
+      } else if (inputRef && typeof inputRef === 'object') {
+        ;(inputRef as React.MutableRefObject<HTMLInputElement | HTMLTextAreaElement | null>).current = el
+      }
+    },
+    [inputRef],
+  )
+
+  const handleAutocompleteSelect = useCallback(
+    (item: AutocompleteItem, triggerStart: number, prefix: string) => {
+      const el = internalInputRef.current
+      if (!el) return
+
+      autocompleteSelectedRef.current = true
+
+      // Find end of the current token
+      let tokenEnd = value.indexOf(' ', triggerStart)
+      if (tokenEnd === -1) tokenEnd = value.length
+
+      const hasSpaces = item.title.includes(' ')
+      const replacement = hasSpaces ? `${prefix}"${item.title}" ` : `${prefix}${item.title} `
+      const newValue = value.substring(0, triggerStart) + replacement + value.substring(tokenEnd)
+      const newCursorPos = triggerStart + replacement.length
+
+      onChange(newValue)
+
+      // Set cursor position after React re-render
+      requestAnimationFrame(() => {
+        el.setSelectionRange(newCursorPos, newCursorPos)
+        setCursorPosition(newCursorPos)
+        el.focus()
+      })
+    },
+    [value, onChange],
+  )
+
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      // Reset the autocomplete selection flag before handling
+      autocompleteSelectedRef.current = false
+
+      // Let autocomplete consume first (Tab returns true, Enter returns false after selecting)
+      if (autocompleteRef.current?.handleKeyDown(e)) return
+
+      if (e.key === 'Tab' && onTab) {
+        e.preventDefault()
+        onTab()
+        return
+      }
+      if (e.key === 'Enter') {
+        if (isComposing) return
+        e.preventDefault()
+        if (autocompleteSelectedRef.current) {
+          // Autocomplete accepted a selection on Enter — the onChange state update
+          // is async, so defer submit until parseResult reflects the new value.
+          pendingSubmitRef.current = true
+        } else {
+          onSubmit()
+        }
+        return
+      }
+      if (e.key === 'Escape') {
+        onCancel()
+        return
+      }
+    },
+    [onSubmit, onCancel, onTab, isComposing],
+  )
+
+  const handleChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      const value = multiline ? e.target.value.replace(/\n/g, '') : e.target.value
+      onChange(value)
+      setCursorPosition(e.target.selectionStart ?? value.length)
+    },
+    [onChange, multiline],
+  )
+
+  const handleSelect = useCallback((e: React.SyntheticEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    setCursorPosition((e.target as HTMLInputElement | HTMLTextAreaElement).selectionStart ?? 0)
+  }, [])
+
+  const chips = chipsOverride ?? (parseResult ? parseChips(parseResult, dateFormat) : [])
+  // The input is the combobox of the suggestion list: it owns the listbox and points at the highlighted option.
+  const comboboxProps = enabled
+    ? {
+        role: 'combobox' as const,
+        'aria-autocomplete': 'list' as const,
+        'aria-expanded': !!listAria,
+        'aria-controls': listAria?.listboxId,
+        'aria-activedescendant': listAria?.activeId,
+      }
+    : {}
+  const hasTokens = enabled && parseResult && parseResult.tokens.length > 0
+
+  return (
+    <div data-token-scope className={cn('relative', className)}>
+      {/* Input wrapper with highlight overlay */}
+      <div className="relative">
+        {hasTokens && (
+          <NlpInputHighlight value={value} tokens={parseResult.tokens} multiline={multiline} />
+        )}
+        {multiline ? (
+          <textarea
+            ref={setRefs}
+            rows={1}
+            value={value}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            onSelect={handleSelect}
+            onBlur={onBlur}
+            {...comboboxProps}
+            onCompositionStart={() => setIsComposing(true)}
+            onCompositionEnd={() => {
+              setIsComposing(false)
+              const el = internalInputRef.current
+              if (el) setCursorPosition(el.selectionStart ?? 0)
+            }}
+            placeholder={placeholder}
+            className={cn(
+              'relative w-full resize-none overflow-hidden bg-transparent text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none',
+              inputClassName,
+            )}
+          />
+        ) : (
+          <input
+            ref={setRefs}
+            type="text"
+            value={value}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            onSelect={handleSelect}
+            onBlur={onBlur}
+            {...comboboxProps}
+            onCompositionStart={() => setIsComposing(true)}
+            onCompositionEnd={() => {
+              setIsComposing(false)
+              // Re-sync cursor after composition
+              const el = internalInputRef.current
+              if (el) setCursorPosition(el.selectionStart ?? 0)
+            }}
+            placeholder={placeholder}
+            className={cn(
+              'relative w-full bg-transparent text-[13px] text-[var(--text-primary)] placeholder:text-[var(--text-secondary)] focus:outline-none',
+              inputClassName,
+            )}
+          />
+        )}
+
+        {/* Autocomplete dropdown */}
+        {!isComposing && (
+          <AutocompleteDropdown
+            ref={autocompleteRef}
+            inputValue={value}
+            cursorPosition={cursorPosition}
+            prefixes={prefixes}
+            projects={projects}
+            labels={labels}
+            onSelect={handleAutocompleteSelect}
+            enabled={enabled}
+            inputElement={inputElement}
+            onAriaChange={setListAria}
+          />
+        )}
+      </div>
+
+      {/* Bang-today hint (parser off): same rule as the save path, a `!` inside the text is not a date */}
+      {showBangTodayHint && extractBangToday(value).dueDate && (
+        <span className="absolute right-0 top-1/2 -translate-y-1/2 shrink-0 text-[11px] font-medium text-accent-blue">
+          Today
+        </span>
+      )}
+
+      {/* Dismissible parse chips + context chips */}
+      {(chips.length > 0 || (contextChips && contextChips.length > 0)) && (
+        <div className="flex flex-wrap gap-1.5 pb-1.5 pt-1">
+          {chips.map((chip) => (
+            <TokenChip
+              key={chip.key}
+              type={chip.type}
+              label={chip.label}
+              source={chip.source}
+              priority={chip.priority}
+              onDismiss={() => (onDismissChip ? onDismissChip(chip) : onSuppressType(chip.type))}
+            />
+          ))}
+          {contextChips?.map((chip) => (
+            <TokenChip
+              key={chip.key}
+              type={chip.type}
+              label={chip.label}
+              onDismiss={onDismissContextChip ? () => onDismissContextChip(chip.key) : undefined}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}

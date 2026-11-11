@@ -1,0 +1,284 @@
+import { Checkbox } from '@/components/shared/Checkbox'
+import { Switch } from '@/components/shared/Switch'
+import { Button } from '@/components/shared/Button'
+import { useState } from 'react'
+import { api } from '@/lib/api'
+import { cn } from '@/lib/cn'
+import type { AppConfig } from '@/lib/vikunja-types'
+import { useLocationReminders } from '@/hooks/use-location-reminders'
+import { MapPin } from 'lucide-react'
+
+interface NotificationSettingsProps {
+  config: AppConfig
+  onChange: (partial: Partial<AppConfig>) => void
+}
+
+const OFFSET_OPTIONS = [
+  { label: 'None', value: 0 },
+  { label: 'At due time', value: -1 },
+  { label: '5 min before', value: 300 },
+  { label: '15 min before', value: 900 },
+  { label: '30 min before', value: 1800 },
+  { label: '1 hour before', value: 3600 },
+  { label: '3 hours before', value: 10800 },
+  { label: '1 day before', value: 86400 },
+]
+
+/** While the master switch is off the sections are dimmed: take them out of the Tab order and the accessibility tree too. */
+function inertWhen(off: boolean) {
+  return (el: HTMLDivElement | null) => {
+    if (el) el.inert = off
+  }
+}
+
+export function NotificationSettings({ config, onChange }: NotificationSettingsProps) {
+  const [testStatus, setTestStatus] = useState<'idle' | 'sent'>('idle')
+  const enabled = config.notifications_enabled ?? false
+
+  const handleTestNotification = async () => {
+    await api.testNotification()
+    setTestStatus('sent')
+    setTimeout(() => setTestStatus('idle'), 3000)
+  }
+
+  const handleOffsetChange = (dropdownValue: number) => {
+    onChange({ notifications_default_reminder_offset: dropdownValue })
+  }
+
+  const offsetDropdownValue = config.notifications_default_reminder_offset ?? 0
+
+  return (
+    <div className="space-y-4">
+      {/* Master toggle */}
+      <div className="rounded-card border border-[var(--border-color)] bg-[var(--bg-primary)] p-5">
+        <label className="flex cursor-pointer items-center gap-2">
+          <Switch
+            checked={enabled}
+            onCheckedChange={(checked) => onChange({ notifications_enabled: checked })}
+          />
+          <span className="text-sm font-semibold text-[var(--text-primary)]">Enable desktop notifications</span>
+        </label>
+        {window.api.platform === 'darwin' && (
+          <p className="mt-2 text-xs text-[var(--text-secondary)]">
+            On macOS, the first notification will prompt you to allow notifications from Vicu.
+          </p>
+        )}
+      </div>
+
+      {/* ── Scheduled Reminders ── */}
+      <div className={cn(
+        'rounded-card border border-[var(--border-color)] bg-[var(--bg-primary)] p-5',
+        !enabled && 'pointer-events-none opacity-40'
+      )} ref={inertWhen(!enabled)}>
+        <h2 className="text-sm font-semibold text-[var(--text-primary)]">Scheduled Reminders</h2>
+        <p className="mb-4 mt-1 text-xs text-[var(--text-secondary)]">
+          Daily notifications that summarize your overdue, due today, and upcoming tasks.
+        </p>
+
+        <div className="space-y-4">
+          {/* Primary time */}
+          <div className="flex items-center gap-3">
+            <label className="flex flex-1 cursor-pointer items-center gap-2">
+              <Checkbox
+                checked={config.notifications_daily_reminder_enabled !== false}
+                onChange={(e) => onChange({ notifications_daily_reminder_enabled: e.target.checked })}
+              />
+              <span className="text-sm text-[var(--text-primary)]">Morning reminder</span>
+            </label>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="time"
+                aria-label="Morning reminder time"
+                value={config.notifications_daily_reminder_time || '08:00'}
+                onChange={(e) => onChange({ notifications_daily_reminder_time: e.target.value })}
+                className="rounded-control border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 py-1 text-sm text-[var(--text-primary)]"
+              />
+            </div>
+          </div>
+
+          {/* Secondary time */}
+          <div className="flex items-center gap-3">
+            <label className="flex flex-1 cursor-pointer items-center gap-2">
+              <Checkbox
+                checked={config.notifications_secondary_reminder_enabled ?? false}
+                onChange={(e) => onChange({ notifications_secondary_reminder_enabled: e.target.checked })}
+              />
+              <span className="text-sm text-[var(--text-primary)]">Afternoon reminder</span>
+            </label>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="time"
+                aria-label="Afternoon reminder time"
+                value={config.notifications_secondary_reminder_time || '16:00'}
+                onChange={(e) => onChange({ notifications_secondary_reminder_time: e.target.value })}
+                className="rounded-control border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 py-1 text-sm text-[var(--text-primary)]"
+              />
+            </div>
+          </div>
+
+          {/* Include */}
+          <div className="border-t border-[var(--border-color)] pt-3">
+            <span className="text-xs font-medium text-[var(--text-secondary)]">Include</span>
+            <div className="mt-2 space-y-2">
+              <label className="flex cursor-pointer items-center gap-2">
+                <Checkbox
+                  checked={config.notifications_overdue_enabled !== false}
+                  onChange={(e) => onChange({ notifications_overdue_enabled: e.target.checked })}
+                />
+                <span className="text-sm text-[var(--text-primary)]">Overdue tasks</span>
+              </label>
+              <label className="flex cursor-pointer items-center gap-2">
+                <Checkbox
+                  checked={config.notifications_due_today_enabled !== false}
+                  onChange={(e) => onChange({ notifications_due_today_enabled: e.target.checked })}
+                />
+                <span className="text-sm text-[var(--text-primary)]">Tasks due today</span>
+              </label>
+              <label className="flex cursor-pointer items-center gap-2">
+                <Checkbox
+                  checked={config.notifications_upcoming_enabled ?? false}
+                  onChange={(e) => onChange({ notifications_upcoming_enabled: e.target.checked })}
+                />
+                <span className="text-sm text-[var(--text-primary)]">Tasks due tomorrow</span>
+              </label>
+            </div>
+          </div>
+
+          {/* Behavior */}
+          <div className="border-t border-[var(--border-color)] pt-3">
+            <div className="space-y-2">
+              <label className="flex cursor-pointer items-center gap-2">
+                <Checkbox
+                  checked={config.notifications_sound !== false}
+                  onChange={(e) => onChange({ notifications_sound: e.target.checked })}
+                />
+                <span className="text-sm text-[var(--text-primary)]">Play sound</span>
+              </label>
+              <label className="flex cursor-pointer items-center gap-2">
+                <Checkbox
+                  checked={config.notifications_persistent ?? false}
+                  onChange={(e) => onChange({ notifications_persistent: e.target.checked })}
+                />
+                <span className="text-sm text-[var(--text-primary)]">Stay until dismissed</span>
+              </label>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Task Reminders ── */}
+      <div className={cn(
+        'rounded-card border border-[var(--border-color)] bg-[var(--bg-primary)] p-5',
+        !enabled && 'pointer-events-none opacity-40'
+      )} ref={inertWhen(!enabled)}>
+        <h2 className="text-sm font-semibold text-[var(--text-primary)]">Task Reminders</h2>
+        <p className="mb-4 mt-1 text-xs text-[var(--text-secondary)]">
+          Reminders you set on individual tasks using the bell icon.
+        </p>
+
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <label className="flex cursor-pointer items-center gap-2">
+              <Checkbox
+                checked={config.notifications_task_reminder_sound !== false}
+                onChange={(e) => onChange({ notifications_task_reminder_sound: e.target.checked })}
+              />
+              <span className="text-sm text-[var(--text-primary)]">Play sound</span>
+            </label>
+            <label className="flex cursor-pointer items-center gap-2">
+              <Checkbox
+                checked={config.notifications_task_reminder_persistent ?? false}
+                onChange={(e) => onChange({ notifications_task_reminder_persistent: e.target.checked })}
+              />
+              <span className="text-sm text-[var(--text-primary)]">Stay until dismissed</span>
+            </label>
+          </div>
+
+          {/* Default reminder */}
+          <div className="border-t border-[var(--border-color)] pt-3">
+            <span className="text-xs font-medium text-[var(--text-secondary)]">Default reminder</span>
+            <p className="mb-2 mt-0.5 text-xs text-[var(--text-secondary)]">
+              Added to every new task that has a due date and no reminder of its own (not when you change the date of an existing task).
+            </p>
+            <div className="flex flex-col gap-2">
+              <select
+                aria-label="Default reminder"
+                value={offsetDropdownValue}
+                onChange={(e) => handleOffsetChange(Number(e.target.value))}
+                className="w-full rounded-control border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 py-1.5 text-sm text-[var(--text-primary)]"
+              >
+                {OFFSET_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+
+              {offsetDropdownValue !== 0 && (
+                <select
+                  aria-label="Default reminder relative to"
+                  value={config.notifications_default_reminder_relative_to || 'due_date'}
+                  onChange={(e) =>
+                    onChange({
+                      notifications_default_reminder_relative_to: e.target.value as
+                        | 'due_date'
+                        | 'start_date'
+                        | 'end_date',
+                    })
+                  }
+                  className="w-full rounded-control border border-[var(--border-color)] bg-[var(--bg-secondary)] px-2 py-1.5 text-sm text-[var(--text-primary)]"
+                >
+                  <option value="due_date">Relative to due date</option>
+                  <option value="start_date">Relative to start date</option>
+                  <option value="end_date">Relative to end date</option>
+                </select>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <PlacesCard />
+
+      {/* Test */}
+      <div className="flex items-center gap-3">
+        <Button variant="secondary" onClick={handleTestNotification}>
+          Test Notification
+        </Button>
+        {testStatus === 'sent' && (
+          <span className="text-xs text-status-done">Notification sent</span>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/**
+ * The places saved on a phone (cross-app semantics section 11.7), read only: only the phone knows
+ * where they are, so it saves them and reminds there. A task's reminder picker offers them.
+ */
+function PlacesCard() {
+  const { places } = useLocationReminders()
+  return (
+    <div className="rounded-card border border-[var(--border-color)] bg-[var(--bg-primary)] p-5">
+      <h2 className="text-sm font-semibold text-[var(--text-primary)]">Places</h2>
+      <p className="mb-3 mt-1 text-xs text-[var(--text-secondary)]">
+        Remind yourself when you arrive at or leave a place: choose it in a task&apos;s reminders. Your phone reminds you there.
+      </p>
+      {places.length === 0 ? (
+        <p className="text-xs text-[var(--text-secondary)]">
+          Save places in Vicu on your phone: Settings &gt; Notifications &gt; Places.
+        </p>
+      ) : (
+        <ul className="space-y-1.5">
+          {places.map((place) => (
+            <li key={place.id} className="flex items-center gap-2 text-sm text-[var(--text-primary)]">
+              <MapPin className="h-3.5 w-3.5 text-[var(--text-secondary)]" aria-hidden="true" />
+              {place.name}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}

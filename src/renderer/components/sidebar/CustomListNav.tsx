@@ -1,0 +1,237 @@
+import { useState } from 'react'
+import { SelectionPill } from './SelectionPill'
+import { useNavigate, useMatches } from '@tanstack/react-router'
+import { Plus, List, Pencil, Trash2, CloudOff, Loader2, RefreshCw } from 'lucide-react'
+import { useSortable, SortableContext, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
+import { useDndMonitor } from '@dnd-kit/core'
+import { CSS } from '@dnd-kit/utilities'
+import { cn } from '@/lib/cn'
+import { listIconOrNone } from '@/lib/custom-list-icons'
+import { CustomListDialog } from '@/components/shared/CustomListDialog'
+import { Menu, MenuItem } from '@/components/overlay/Menu'
+import type { CustomList } from '@/lib/vikunja-types'
+import {
+  useCustomLists,
+  useCustomListSyncStatus,
+  useDeleteCustomList,
+  useReorderCustomLists,
+  useSyncCustomLists,
+  useUpsertCustomList,
+} from '@/hooks/use-custom-lists'
+
+function CustomListItem({
+  item,
+  isActive,
+  onNavigate,
+  onContextMenu,
+}: {
+  item: CustomList
+  isActive: boolean
+  onNavigate: () => void
+  onContextMenu: (e: React.MouseEvent) => void
+}) {
+  const ItemIcon = listIconOrNone(item.icon, List)
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: `custom-list-${item.id}`,
+    data: { type: 'custom-list', listId: item.id, list: item },
+  })
+
+  const yOnlyTransform = transform ? { ...transform, x: 0 } : transform
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(yOnlyTransform),
+    transition: transition ?? undefined,
+    opacity: isDragging ? 0.4 : undefined,
+  }
+
+  return (
+    <button
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      type="button"
+      onClick={onNavigate}
+      aria-current={isActive ? 'page' : undefined}
+      onContextMenu={onContextMenu}
+      className={cn(
+        'relative flex h-8 items-center gap-2.5 rounded-control px-2.5 text-[13px] font-medium transition-colors',
+        isActive
+          ? 'text-[var(--text-primary)]'
+          : 'text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+      )}
+    >
+      {isActive && <SelectionPill />}
+      {ItemIcon && <ItemIcon className="h-4 w-4 shrink-0 text-[var(--text-secondary)]" strokeWidth={1.8} />}
+      <span className="flex-1 truncate text-left">{item.name}</span>
+    </button>
+  )
+}
+
+export function CustomListNav() {
+  const navigate = useNavigate()
+  const matches = useMatches()
+  const currentPath = matches[matches.length - 1]?.pathname ?? ''
+
+  const { data: lists = [] } = useCustomLists()
+  const { data: syncStatus } = useCustomListSyncStatus()
+  const upsertList = useUpsertCustomList()
+  const deleteList = useDeleteCustomList()
+  const reorderLists = useReorderCustomLists()
+  const syncLists = useSyncCustomLists()
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [editingList, setEditingList] = useState<CustomList | null>(null)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; list: CustomList } | null>(null)
+
+  // Handle custom list reorder via dnd monitor
+  useDndMonitor({
+    onDragEnd(event) {
+      const { active, over } = event
+      if (!over) return
+
+      const activeType = (active.data.current as Record<string, unknown>)?.type
+      if (activeType !== 'custom-list') return
+
+      const activeId = (active.data.current as Record<string, unknown>)?.listId as string
+      const overId = (over.data.current as Record<string, unknown>)?.listId as string | undefined
+      if (!activeId || !overId || activeId === overId) return
+
+      const oldIndex = lists.findIndex((l) => l.id === activeId)
+      const newIndex = lists.findIndex((l) => l.id === overId)
+      if (oldIndex === -1 || newIndex === -1) return
+
+      const reordered = arrayMove(lists, oldIndex, newIndex)
+      reorderLists.mutate(reordered.map((list) => list.id))
+    },
+  })
+
+  const handleSave = async (list: CustomList) => {
+    await upsertList.mutateAsync(list)
+    setDialogOpen(false)
+    setEditingList(null)
+  }
+
+  const handleDelete = async (id: string) => {
+    await deleteList.mutateAsync(id)
+    setContextMenu(null)
+
+    // Navigate away if viewing the deleted list
+    if (currentPath === `/list/${id}`) {
+      navigate({ to: '/inbox' })
+    }
+  }
+
+  const handleContextMenu = (e: React.MouseEvent, list: CustomList) => {
+    e.preventDefault()
+    setContextMenu({ x: e.clientX, y: e.clientY, list })
+  }
+
+  const sortableIds = lists.map((l) => `custom-list-${l.id}`)
+
+  return (
+    <>
+      <div className="px-4 pb-1 pt-3">
+        <div className="flex items-center justify-between">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-secondary)]">
+            Lists
+          </span>
+          <div className="flex items-center gap-0.5">
+            {syncStatus && !['idle', 'local_only'].includes(syncStatus.state) && (
+              <button
+                type="button"
+                onClick={() => syncLists.mutate()}
+                disabled={syncStatus.state === 'syncing'}
+                className={cn(
+                  'flex h-5 w-5 items-center justify-center rounded-control transition-colors hover:bg-[var(--bg-hover)]',
+                  syncStatus.state === 'error' || syncStatus.state === 'update_required'
+                    ? 'text-danger'
+                    : 'text-[var(--text-secondary)]',
+                )}
+                title={'message' in syncStatus ? syncStatus.message : syncStatus.state === 'pending' ? 'Custom-list sync pending' : 'Syncing custom lists'}
+                aria-label="Retry custom-list sync"
+              >
+                {syncStatus.state === 'syncing' ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  : syncStatus.state === 'offline' ? <CloudOff className="h-3.5 w-3.5" />
+                    : <RefreshCw className="h-3.5 w-3.5" />}
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setEditingList(null)
+                setDialogOpen(true)
+              }}
+              className="flex h-5 w-5 items-center justify-center rounded-control text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
+              aria-label="New list"
+            >
+              <Plus className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <nav aria-label="Custom lists" className="flex flex-col gap-0.5 px-2 pb-2">
+        <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
+          {lists.map((item) => {
+            const path = `/list/${item.id}`
+            const isActive = currentPath === path
+            return (
+              <CustomListItem
+                key={item.id}
+                item={item}
+                isActive={isActive}
+                onNavigate={() => navigate({ to: '/list/$listId', params: { listId: item.id } })}
+                onContextMenu={(e) => handleContextMenu(e, item)}
+              />
+            )
+          })}
+        </SortableContext>
+
+        {lists.length === 0 && (
+          <p className="px-2.5 py-1 text-[11px] text-[var(--text-secondary)]">
+            No custom lists yet
+          </p>
+        )}
+      </nav>
+
+      {/* Context menu: the Menu primitive at the pointer (arrow keys, Escape, focus return, kept in the window). */}
+      {contextMenu && (
+        <Menu
+          key={`${contextMenu.list.id}:${contextMenu.x}:${contextMenu.y}`}
+          anchorPoint={{ x: contextMenu.x, y: contextMenu.y }}
+          label={`${contextMenu.list.name} actions`}
+          onClose={() => setContextMenu(null)}
+        >
+          <MenuItem
+            icon={<Pencil />}
+            onSelect={() => {
+              setEditingList(contextMenu.list)
+              setDialogOpen(true)
+            }}
+          >
+            Edit
+          </MenuItem>
+          <MenuItem icon={<Trash2 />} danger onSelect={() => void handleDelete(contextMenu.list.id)}>
+            Delete
+          </MenuItem>
+        </Menu>
+      )}
+
+      <CustomListDialog
+        open={dialogOpen}
+        list={editingList}
+        onSave={handleSave}
+        onClose={() => {
+          setDialogOpen(false)
+          setEditingList(null)
+        }}
+      />
+    </>
+  )
+}

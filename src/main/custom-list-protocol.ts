@@ -1,0 +1,404 @@
+// The shapes live with the config types so the renderer sees the same ones (D-CFG-3).
+import type {
+  CustomList,
+  CustomListRevision,
+  CustomListSyncDocumentV1,
+  CustomListSyncRecord,
+  CustomListWire,
+} from '../shared/config-types'
+import { changedWithinDays } from '../shared/custom-list-filter'
+import { isHiddenTask, kindMarkerPattern } from '../shared/hidden-tasks'
+export type {
+  CustomList,
+  CustomListFilter,
+  CustomListRevision,
+  CustomListSyncDocumentV1,
+  CustomListSyncRecord,
+  CustomListWire,
+  CustomListWireFilter,
+} from '../shared/config-types'
+
+export const CUSTOM_LIST_CARRIER_TITLE = 'Vicu custom lists (sync metadata — do not delete)'
+export const CUSTOM_LIST_MARKER_PREFIX = '<!-- vicu-custom-lists:'
+/** Search text that finds the carrier server side (the marker name inside the HTML comment). */
+export const CUSTOM_LIST_CARRIER_SEARCH = 'vicu-custom-lists'
+export const CUSTOM_LIST_SYNC_VERSION = 1
+export const CUSTOM_LIST_SYNC_MAX_BYTES = 512 * 1024
+
+// Whitespace inside the comment is only space, tab, CR and LF, as in the hiding rule (shared/hidden-tasks.ts).
+const MARKER_RE = /<!--[ \t\r\n]*vicu-custom-lists:v(\d+):([A-Za-z0-9_-]+={0,2})[ \t\r\n]*-->/
+const ANY_MARKER_RE = /<!--[ \t\r\n]*vicu-custom-lists:[\s\S]*?-->/
+/** The start of the marker: enough to call a task a custom-list carrier (readable or not). */
+const MARKER_START_RE = kindMarkerPattern('custom-lists')
+
+export interface ParsedCustomListEnvelope {
+  isCarrier: boolean
+  body: string
+  version?: number
+  document?: CustomListSyncDocumentV1
+  error?: string
+}
+
+function compareStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0
+}
+
+export function hasCustomListMarker(description?: string | null): boolean {
+  return !!description && MARKER_START_RE.test(description)
+}
+
+/** Every hidden task, of any kind (cross-app semantics 10.1); the one rule in shared/hidden-tasks.ts. */
+export function hasVicuMetadataMarker(description?: string | null): boolean {
+  return isHiddenTask(description)
+}
+
+export function compareRevision(left: CustomListRevision, right: CustomListRevision): number {
+  return left.wall_time_ms - right.wall_time_ms ||
+    left.counter - right.counter ||
+    compareStrings(left.device_id, right.device_id)
+}
+
+function allRevisions(document: CustomListSyncDocumentV1): CustomListRevision[] {
+  return [document.order.revision, ...Object.values(document.lists).map((entry) => entry.revision)]
+}
+
+export function nextRevision(
+  document: CustomListSyncDocumentV1,
+  deviceId: string,
+  now = Date.now(),
+): CustomListRevision {
+  const revisions = allRevisions(document)
+  const maxWall = revisions.reduce((max, revision) => Math.max(max, revision.wall_time_ms), 0)
+  const wallTime = Math.max(now, maxWall)
+  const maxCounter = revisions
+    .filter((revision) => revision.wall_time_ms === wallTime)
+    .reduce((max, revision) => Math.max(max, revision.counter), -1)
+  return {
+    wall_time_ms: wallTime,
+    counter: wallTime === now && now > maxWall ? 0 : maxCounter + 1,
+    device_id: deviceId,
+  }
+}
+
+/**
+ * A document nobody has written to. Its order carries a zero revision, not "now": an empty order
+ * stamped with the current time beat the real order of another device on a first sync and was
+ * then written back over it.
+ */
+export function emptyCustomListDocument(deviceId: string): CustomListSyncDocumentV1 {
+  return {
+    version: 1,
+    lists: {},
+    order: { ids: [], revision: { wall_time_ms: 0, counter: 0, device_id: deviceId } },
+  }
+}
+
+/** Deleted lists are remembered as tombstones so the deletion reaches every device; after this long they are dropped. */
+export const TOMBSTONE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000
+
+/**
+ * The document without the tombstones (`value: null`) whose revision is older than 90 days. Lists
+ * that exist are never touched. A device that has been offline longer than that and still holds a
+ * deleted list may bring it back; the age is the price of a document that does not grow forever.
+ */
+export function pruneTombstones(document: CustomListSyncDocumentV1, now = Date.now()): CustomListSyncDocumentV1 {
+  const cutoff = now - TOMBSTONE_MAX_AGE_MS
+  const lists: Record<string, CustomListSyncRecord> = {}
+  for (const [id, record] of Object.entries(document.lists)) {
+    if (record.value === null && record.revision.wall_time_ms < cutoff) continue
+    lists[id] = record
+  }
+  return { ...document, lists }
+}
+
+const KNOWN_LIST_KEYS: ReadonlySet<string> = new Set(['id', 'name', 'icon', 'filter', 'saved_filter_id'])
+const KNOWN_FILTER_KEYS: ReadonlySet<string> = new Set([
+  'project_ids',
+  'project_filter_mode',
+  'add_to_project_id',
+  'sort_by',
+  'order_by',
+  'due_date_filter',
+  'priority_filter',
+  'label_ids',
+  'include_done',
+  'include_today_all_projects',
+  'include_overdue',
+  'assigned',
+  'comments',
+  'shared_only',
+  'changed_within_days',
+  'rule',
+  'rule_include_nulls',
+  'then_by',
+])
+
+/** `then_by` in its canonical form: entries with a string key, the order `asc` or `desc`. */
+function normalizeThenBy(value: unknown): Array<{ sort_by: string; order_by: string }> {
+  if (!Array.isArray(value)) return []
+  return value
+    .filter((entry): entry is { sort_by: string; order_by?: unknown } =>
+      typeof entry === 'object' && entry !== null && typeof (entry as { sort_by?: unknown }).sort_by === 'string')
+    .map((entry) => ({ sort_by: entry.sort_by, order_by: entry.order_by === 'desc' ? 'desc' : 'asc' }))
+}
+
+/**
+ * The fields of `source` that are not in `known`, with keys in sorted order so two devices
+ * that saw the same fields in a different order still produce the same JSON.
+ */
+function unknownFields(source: object, known: ReadonlySet<string>): Record<string, unknown> {
+  const record = source as Record<string, unknown>
+  const extra: Record<string, unknown> = {}
+  for (const key of Object.keys(record).sort()) {
+    if (!known.has(key) && key !== '__proto__' && record[key] !== undefined) extra[key] = record[key]
+  }
+  return extra
+}
+
+/**
+ * The canonical form of a synced list: known fields are validated and defaulted, and unknown
+ * fields (list value and filter) are carried over untouched so a field added by another app
+ * survives a round trip through this one. `include_overdue` is only written when it was set;
+ * `assigned` and `comments` when they are a non-empty string (a value from a newer app is kept),
+ * `shared_only` when true and `changed_within_days` when it is a whole number of 1 or more.
+ */
+export function normalizeWireList(value: CustomListWire): CustomListWire {
+  const { assigned, comments, rule } = value.filter
+  const changedDays = changedWithinDays(value.filter)
+  const thenBy = normalizeThenBy(value.filter.then_by)
+  const savedFilterId = value.saved_filter_id
+  return {
+    id: value.id,
+    name: value.name.trim(),
+    icon: value.icon || '',
+    filter: {
+      project_ids: [...new Set(value.filter.project_ids ?? [])],
+      project_filter_mode: value.filter.project_filter_mode === 'exclude' ? 'exclude' : 'include',
+      add_to_project_id: Number.isFinite(value.filter.add_to_project_id) ? value.filter.add_to_project_id : 0,
+      sort_by: value.filter.sort_by || 'due_date',
+      order_by: value.filter.order_by === 'desc' ? 'desc' : 'asc',
+      due_date_filter: value.filter.due_date_filter || 'all',
+      priority_filter: [...new Set(value.filter.priority_filter ?? [])],
+      label_ids: [...new Set(value.filter.label_ids ?? [])],
+      include_done: value.filter.include_done === true,
+      include_today_all_projects: value.filter.include_today_all_projects === true,
+      ...(typeof value.filter.include_overdue === 'boolean' ? { include_overdue: value.filter.include_overdue } : {}),
+      ...(typeof assigned === 'string' && assigned ? { assigned } : {}),
+      ...(typeof comments === 'string' && comments ? { comments } : {}),
+      ...(value.filter.shared_only === true ? { shared_only: true } : {}),
+      ...(changedDays !== null ? { changed_within_days: changedDays } : {}),
+      ...(typeof rule === 'string' && rule.trim() !== '' ? { rule } : {}),
+      ...(value.filter.rule_include_nulls === true ? { rule_include_nulls: true } : {}),
+      ...(thenBy.length > 0 ? { then_by: thenBy } : {}),
+      ...unknownFields(value.filter, KNOWN_FILTER_KEYS),
+    },
+    ...(typeof savedFilterId === 'number' && Number.isInteger(savedFilterId) ? { saved_filter_id: savedFilterId } : {}),
+    ...unknownFields(value, KNOWN_LIST_KEYS),
+  }
+}
+
+/** A list from the app's config as a synced value. Unknown fields pass through. */
+export function appListToWire(list: CustomList): CustomListWire {
+  return normalizeWireList({ ...list, icon: list.icon ?? '', filter: { ...list.filter } } as CustomListWire)
+}
+
+/**
+ * A synced value as the list the app keeps in its config: empty priority and label conditions
+ * are left out. Unknown fields pass through.
+ */
+export function wireToAppList(list: CustomListWire): CustomList {
+  const { icon, filter, ...rest } = list
+  const { priority_filter: priorities, label_ids: labelIds, ...filterRest } = filter
+  return {
+    ...rest,
+    ...(icon ? { icon } : {}),
+    filter: {
+      ...filterRest,
+      ...(priorities.length ? { priority_filter: priorities } : {}),
+      ...(labelIds.length ? { label_ids: labelIds } : {}),
+    },
+  } as CustomList
+}
+
+export function documentFromLists(
+  lists: CustomListWire[],
+  deviceId: string,
+  now = Date.now(),
+): CustomListSyncDocumentV1 {
+  const document = emptyCustomListDocument(deviceId)
+  // Nothing written yet: keep the zero revision so the first sync takes another device's order.
+  if (lists.length === 0) return document
+  let counter = 0
+  for (const value of lists) {
+    const normalized = normalizeWireList(value)
+    document.lists[normalized.id] = {
+      value: normalized,
+      revision: { wall_time_ms: now, counter: counter++, device_id: deviceId },
+    }
+  }
+  document.order = {
+    ids: lists.map((list) => list.id),
+    revision: { wall_time_ms: now, counter, device_id: deviceId },
+  }
+  return document
+}
+
+export function activeLists(document: CustomListSyncDocumentV1): CustomListWire[] {
+  const active = Object.values(document.lists).filter(
+    (record): record is CustomListSyncRecord & { value: CustomListWire } => record.value !== null,
+  )
+  const byId = new Map(active.map((record) => [record.value.id, record]))
+  const result: CustomListWire[] = []
+  const seen = new Set<string>()
+  for (const id of document.order.ids) {
+    const record = byId.get(id)
+    if (!record || seen.has(id)) continue
+    seen.add(id)
+    result.push(normalizeWireList(record.value))
+  }
+  const missing = active
+    .filter((record) => !seen.has(record.value.id))
+    .sort((left, right) => compareRevision(left.revision, right.revision) || compareStrings(left.value.id, right.value.id))
+  return withoutDuplicateImports([...result, ...missing.map((record) => normalizeWireList(record.value))])
+}
+
+/**
+ * `lists` without the ones that repeat another list's saved filter: per `saved_filter_id`, the
+ * list whose id sorts first stays (section 3.7).
+ */
+export function withoutDuplicateImports(lists: CustomListWire[]): CustomListWire[] {
+  const winners = new Map<number, string>()
+  for (const list of lists) {
+    const filterId = list.saved_filter_id
+    if (typeof filterId !== 'number') continue
+    const current = winners.get(filterId)
+    if (current === undefined || compareStrings(list.id, current) < 0) winners.set(filterId, list.id)
+  }
+  return lists.filter((list) => typeof list.saved_filter_id !== 'number' || winners.get(list.saved_filter_id) === list.id)
+}
+
+/** The lists `activeLists` hides as duplicate imports, which the next write turns into tombstones. */
+export function duplicateImports(document: CustomListSyncDocumentV1): string[] {
+  const active = Object.values(document.lists).flatMap((record) => (record.value ? [record.value] : []))
+  const kept = new Set(withoutDuplicateImports(active).map((list) => list.id))
+  return active.map((list) => list.id).filter((id) => !kept.has(id)).sort(compareStrings)
+}
+
+/** `document` with every hidden duplicate import deleted (a tombstone stamped `deviceId`). */
+export function dropDuplicateImports(
+  document: CustomListSyncDocumentV1,
+  deviceId: string,
+  now = Date.now(),
+): CustomListSyncDocumentV1 {
+  for (const id of duplicateImports(document)) {
+    document.lists[id] = { value: null, revision: nextRevision(document, deviceId, now) }
+  }
+  return document
+}
+
+/** The union of two `imported_saved_filters`, ascending; undefined when empty. */
+export function unionImported(left?: number[], right?: number[]): number[] | undefined {
+  const all = [...new Set([...(left ?? []), ...(right ?? [])])].filter((id) => Number.isInteger(id)).sort((a, b) => a - b)
+  return all.length > 0 ? all : undefined
+}
+
+export function normalizeDocument(document: CustomListSyncDocumentV1): CustomListSyncDocumentV1 {
+  const lists: Record<string, CustomListSyncRecord> = {}
+  for (const [id, record] of Object.entries(document.lists)) {
+    lists[id] = { ...record, value: record.value ? normalizeWireList({ ...record.value, id }) : null }
+  }
+  const normalized: CustomListSyncDocumentV1 = { version: 1, lists, order: { ...document.order, ids: [...document.order.ids] } }
+  const imported = unionImported(document.imported_saved_filters)
+  if (imported) normalized.imported_saved_filters = imported
+  normalized.order.ids = activeLists(normalized).map((list) => list.id)
+  return normalized
+}
+
+export function mergeCustomListDocuments(
+  left: CustomListSyncDocumentV1,
+  right: CustomListSyncDocumentV1,
+): CustomListSyncDocumentV1 {
+  const lists: Record<string, CustomListSyncRecord> = {}
+  for (const id of new Set([...Object.keys(left.lists), ...Object.keys(right.lists)])) {
+    const a = left.lists[id]
+    const b = right.lists[id]
+    lists[id] = !a ? b : !b ? a : compareRevision(a.revision, b.revision) >= 0 ? a : b
+  }
+  const order = compareRevision(left.order.revision, right.order.revision) >= 0 ? left.order : right.order
+  const imported = unionImported(left.imported_saved_filters, right.imported_saved_filters)
+  return normalizeDocument({
+    version: 1,
+    lists,
+    order: { ids: [...order.ids], revision: { ...order.revision } },
+    ...(imported ? { imported_saved_filters: imported } : {}),
+  })
+}
+
+function validateRevision(value: unknown): asserts value is CustomListRevision {
+  if (!value || typeof value !== 'object') throw new Error('Custom-list revision is missing')
+  const revision = value as Partial<CustomListRevision>
+  if (!Number.isFinite(revision.wall_time_ms) || !Number.isInteger(revision.counter) || revision.counter! < 0 || !revision.device_id) {
+    throw new Error('Custom-list revision is invalid')
+  }
+}
+
+export function validateCustomListDocument(value: unknown): asserts value is CustomListSyncDocumentV1 {
+  if (!value || typeof value !== 'object') throw new Error('Custom-list metadata is invalid')
+  const document = value as Partial<CustomListSyncDocumentV1>
+  if (document.version !== 1) throw new Error('Custom-list payload version mismatch')
+  if (!document.lists || typeof document.lists !== 'object' || !document.order || !Array.isArray(document.order.ids)) {
+    throw new Error('Custom-list metadata structure is invalid')
+  }
+  validateRevision(document.order.revision)
+  for (const [id, record] of Object.entries(document.lists)) {
+    if (!record || typeof record !== 'object') throw new Error(`Custom-list record ${id} is invalid`)
+    const typed = record as Partial<CustomListSyncRecord>
+    validateRevision(typed.revision)
+    if (typed.value !== null) {
+      if (!typed.value || typed.value.id !== id || !typed.value.name?.trim() || !typed.value.filter) {
+        throw new Error(`Custom-list value ${id} is invalid`)
+      }
+      normalizeWireList(typed.value)
+    }
+  }
+}
+
+export function parseCustomListEnvelope(description?: string | null): ParsedCustomListEnvelope {
+  if (!description) return { isCarrier: false, body: '' }
+  const any = description.match(ANY_MARKER_RE)
+  if (!any || any.index === undefined) {
+    // An unclosed marker is still a carrier, just not a readable one.
+    return MARKER_START_RE.test(description)
+      ? { isCarrier: true, body: description, error: 'Malformed custom-list metadata' }
+      : { isCarrier: false, body: description }
+  }
+  const body = `${description.slice(0, any.index)}${description.slice(any.index + any[0].length)}`.trimEnd()
+  const marker = any[0].match(MARKER_RE)
+  if (!marker) return { isCarrier: true, body, error: 'Malformed custom-list metadata' }
+  const version = Number(marker[1])
+  if (version !== CUSTOM_LIST_SYNC_VERSION) {
+    return { isCarrier: true, body, version, error: `Custom-list metadata version ${version} is not supported` }
+  }
+  try {
+    const bytes = Buffer.from(marker[2].replace(/-/g, '+').replace(/_/g, '/'), 'base64')
+    if (bytes.byteLength > CUSTOM_LIST_SYNC_MAX_BYTES) throw new Error('Custom-list metadata is too large')
+    const document = JSON.parse(bytes.toString('utf8')) as unknown
+    // A v1 marker around a document of a newer version: written by a newer app, so "update
+    // required" rather than malformed (cross-app semantics 10.7).
+    const payloadVersion = (document as { version?: unknown } | null)?.version
+    if (typeof payloadVersion === 'number' && payloadVersion > CUSTOM_LIST_SYNC_VERSION) {
+      return { isCarrier: true, body, version: payloadVersion, error: `Custom-list metadata version ${payloadVersion} is not supported` }
+    }
+    validateCustomListDocument(document)
+    return { isCarrier: true, body, version, document: normalizeDocument(document) }
+  } catch (error) {
+    return { isCarrier: true, body, version, error: error instanceof Error ? error.message : 'Cannot decode custom-list metadata' }
+  }
+}
+
+export function encodeCustomListEnvelope(document: CustomListSyncDocumentV1): string {
+  validateCustomListDocument(document)
+  const bytes = Buffer.from(JSON.stringify(normalizeDocument(document)), 'utf8')
+  if (bytes.byteLength > CUSTOM_LIST_SYNC_MAX_BYTES) throw new Error('Custom-list metadata is too large')
+  return `<!-- vicu-custom-lists:v1:${bytes.toString('base64url')} -->`
+}

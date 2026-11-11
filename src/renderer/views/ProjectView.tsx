@@ -1,0 +1,252 @@
+import { Fragment, useEffect, useMemo, useState } from 'react'
+import { useParams } from '@tanstack/react-router'
+import { useDndMonitor } from '@dnd-kit/core'
+import { SortableContext } from '@dnd-kit/sortable'
+import { verticalListSortingStrategyForeignSafe } from '@/lib/sortable-strategy'
+import { useProjectTasks } from '@/hooks/use-project-tasks'
+import { useProjectSections, type SectionData } from '@/hooks/use-project-sections'
+import { useProjects } from '@/hooks/use-projects'
+import { useReorderStore } from '@/stores/reorder-store'
+import { usePrintable } from '@/stores/print-store'
+import type { Task, Project } from '@/lib/vikunja-types'
+import { TaskList } from '@/components/task-list/TaskList'
+import { SectionGroup } from '@/components/task-list/SectionGroup'
+import { AddSectionButton } from '@/components/task-list/AddSectionButton'
+import { ParentDropZone } from '@/components/task-list/ParentDropZone'
+import { RowViewProvider } from '@/components/task-list/RowViewContext'
+import { ListSkeleton } from '@/components/shared/ListSkeleton'
+import { Button } from '@/components/shared/Button'
+import { ProjectHeaderMenu } from '@/components/projects/ProjectHeaderMenu'
+import { useSharedProjectActions } from '@/hooks/use-project-actions'
+
+function findSectionForTask(
+  sections: SectionData[],
+  taskId: number
+): { containerId: string; index: number } | null {
+  for (const section of sections) {
+    const idx = section.tasks.findIndex((t) => t.id === taskId)
+    if (idx !== -1) return { containerId: String(section.project.id), index: idx }
+    const found = findSectionForTask(section.children, taskId)
+    if (found) return found
+  }
+  return null
+}
+
+function flattenForPrint(
+  secs: SectionData[]
+): { heading: string; groups: { tasks: Task[] }[] }[] {
+  return secs.flatMap((s) => [
+    { heading: s.project.title, groups: [{ tasks: s.tasks }] },
+    ...flattenForPrint(s.children),
+  ])
+}
+
+interface InsertIndicator {
+  containerId: string // 'parent' or section project ID as string
+  index: number
+}
+
+export function ProjectView() {
+  const { projectId } = useParams({ from: '/project/$projectId' })
+  const pid = Number(projectId)
+  const { restore } = useSharedProjectActions()
+  // The rows are listed inside this project: none of them names it.
+  const rowView = useMemo(() => ({ projectId: pid }), [pid])
+  const { data: projectData, isLoading: projectsLoading } = useProjects()
+  const activeProject = projectData?.flat.find((p) => p.id === pid)
+  const archivedProject = projectData?.archived.find((p) => p.id === pid)
+  const projectName = activeProject?.title ?? archivedProject?.title ?? 'Project'
+
+  const { data: tasks = [], isLoading: tasksLoading, viewId, order: taskOrder } = useProjectTasks(activeProject?.id)
+  const { sections, hasSections, isLoading: sectionsLoading } = useProjectSections(pid)
+  const setReorderContext = useReorderStore((s) => s.setReorderContext)
+  const clearSectionContexts = useReorderStore((s) => s.clearSectionContexts)
+
+  const [insertIndicator, setInsertIndicator] = useState<InsertIndicator | null>(null)
+
+  // Push parent-project reorder context whenever its tasks shift.
+  useEffect(() => {
+    setReorderContext(viewId ?? null, tasks, taskOrder)
+  }, [viewId, tasks, taskOrder, setReorderContext])
+
+  // Clear section reorder contexts only when navigating to a different project
+  // (or unmounting). Tying clearance to `tasks` would wipe contexts on every
+  // re-render, but a SectionGroup only re-pushes its own context when ITS
+  // tasks reference changes — so untouched siblings would silently lose their
+  // entry until the next time their tasks happened to update, and any drop
+  // targeting one of them would fail to resolve a destination.
+  useEffect(() => {
+    return () => clearSectionContexts()
+  }, [pid, clearSectionContexts])
+
+  usePrintable(
+    useMemo(
+      () => ({
+        viewTitle: projectName,
+        sections: [
+          ...(tasks.length > 0 ? [{ groups: [{ tasks }] }] : []),
+          ...flattenForPrint(sections),
+        ],
+      }),
+      [projectName, tasks, sections]
+    )
+  )
+
+  // Track cross-container drag hover for visual insertion line
+  useDndMonitor({
+    onDragOver(event) {
+      const { active, over } = event
+      if (!over || !active) {
+        setInsertIndicator(null)
+        return
+      }
+
+      const activeData = active.data.current as Record<string, unknown>
+      if (activeData?.type !== 'task') {
+        setInsertIndicator(null)
+        return
+      }
+
+      const draggedTask = activeData.task as Task
+      const overId = String(over.id)
+      const overData = over.data.current as Record<string, unknown>
+
+      // Determine which container the over target belongs to and the insert index
+      let overContainerId: string | null = null
+      let overIndex = 0
+
+      if (overData?.type === 'section') {
+        // Hovering over a section header — insert at top of that section
+        const project = overData.project as Project
+        overContainerId = String(project.id)
+        overIndex = 0
+      } else if (overData?.type === 'section-bottom') {
+        // Hovering at the bottom of a section — insert at the end
+        overContainerId = String(overData.projectId)
+        overIndex = (overData.taskCount as number | undefined) ?? 0
+      } else if (overData?.type === 'parent-project') {
+        overContainerId = 'parent'
+        overIndex = tasks.length
+      } else if (overId.startsWith('task-')) {
+        const targetTaskId = Number(overId.replace('task-', ''))
+        // Check parent tasks
+        const parentIdx = tasks.findIndex((t) => t.id === targetTaskId)
+        if (parentIdx !== -1) {
+          overContainerId = 'parent'
+          overIndex = parentIdx
+        } else {
+          const sectionResult = findSectionForTask(sections, targetTaskId)
+          if (sectionResult) {
+            overContainerId = sectionResult.containerId
+            overIndex = sectionResult.index
+          }
+        }
+      }
+
+      if (!overContainerId) {
+        setInsertIndicator(null)
+        return
+      }
+
+      // Find which container the dragged task is in
+      let dragContainerId: string | null = null
+      if (tasks.some((t) => t.id === draggedTask.id)) {
+        dragContainerId = 'parent'
+      } else {
+        const dragResult = findSectionForTask(sections, draggedTask.id)
+        if (dragResult) dragContainerId = dragResult.containerId
+      }
+
+      // Only show insertion line for cross-container drags
+      // Within the same container, @dnd-kit sortable handles the visual displacement
+      if (dragContainerId === overContainerId) {
+        setInsertIndicator(null)
+        return
+      }
+
+      setInsertIndicator({ containerId: overContainerId, index: overIndex })
+    },
+    onDragEnd() {
+      setInsertIndicator(null)
+    },
+    onDragCancel() {
+      setInsertIndicator(null)
+    },
+  })
+
+  const isLoading = projectsLoading || tasksLoading || sectionsLoading
+
+  if (isLoading) {
+    return <ListSkeleton title={projectName} />
+  }
+
+  if (projectData && !activeProject) {
+    return (
+      <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
+        <h1 className="text-lg font-semibold text-[var(--text-primary)]">
+          {archivedProject ? 'Project archived' : 'Project unavailable'}
+        </h1>
+        <p className="max-w-sm text-sm text-[var(--text-secondary)]">
+          {archivedProject
+            ? 'Restore it to see its tasks again.'
+            : 'This project may have been deleted or you may no longer have access.'}
+        </p>
+        {archivedProject && (
+          <Button variant="primary" className="mt-2" onClick={() => restore(archivedProject)}>
+            Restore project
+          </Button>
+        )}
+      </div>
+    )
+  }
+
+  const sectionProjects = sections.map((s) => s.project)
+  const parentInsertIndex =
+    insertIndicator?.containerId === 'parent' ? insertIndicator.index : undefined
+
+  return (
+    <RowViewProvider value={rowView}>
+    <TaskList
+      title={projectName}
+      tasks={tasks}
+      projectId={pid}
+      sortable
+      taskOrder={taskOrder}
+      viewId={viewId}
+      empty={tasks.length === 0 && !hasSections}
+      emptyTitle="No tasks in this project"
+      emptySubtitle="Create a new task to get started"
+      headerActions={activeProject && <ProjectHeaderMenu project={activeProject} />}
+      insertIndex={parentInsertIndex}
+      newTaskPlacement="after-tasks"
+    >
+      <div className="px-2">
+        {hasSections && <ParentDropZone projectId={pid} />}
+        {hasSections && (
+          <SortableContext
+            items={sectionProjects.map((p) => `section-${p.id}`)}
+            strategy={verticalListSortingStrategyForeignSafe}
+          >
+            {sections.map((section, i) => (
+              <Fragment key={section.project.id}>
+                {i > 0 && <AddSectionButton parentProjectId={pid} siblings={sectionProjects} index={i} />}
+              <SectionGroup
+                project={section.project}
+                tasks={section.tasks}
+                viewId={section.viewId}
+                siblings={sectionProjects}
+                childSections={section.children}
+                depth={0}
+                insertIndicator={insertIndicator}
+                taskOrder={section.order}
+              />
+              </Fragment>
+            ))}
+          </SortableContext>
+        )}
+        <AddSectionButton parentProjectId={pid} siblings={sectionProjects} index={sectionProjects.length} />
+      </div>
+    </TaskList>
+    </RowViewProvider>
+  )
+}

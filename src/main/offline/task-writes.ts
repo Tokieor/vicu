@@ -1,0 +1,327 @@
+import { isQueueableFailure, isRetriableError } from '../../shared/error-classify'
+import type { QueuedWriteReply, TaskWriteOptions } from '../../shared/offline-queue-types'
+import type { ApiError, ApiResult, ApiSuccess } from '../api-result'
+import type { OfflineQueue } from './queue'
+
+// The one place where a change to an existing task decides between "send it now" and "queue it".
+//
+// The queue replays in order and a replay sends each action's patch as it was written. If a newer
+// change were sent straight to the server while an older one for the same task still waits in the
+// queue, the replay would later send the older one on top of it and the user's last edit would be
+// lost (the title ends up as EDIT1 although EDIT2 was typed last). So:
+//
+//   - while the queue holds anything for a task, a new change to that task goes into the queue as
+//     well, where it folds into what is there (the newest value of a field wins);
+//   - changes to one task are handled one at a time, so a request that is still in flight cannot be
+//     overtaken by the next change and then queued behind it after it fails;
+//   - a change that could not reach the server is queued here, not by the caller, so nothing can
+//     slip in between the failure and the enqueue.
+//
+// Every IPC handler and Quick View action that changes an existing task goes through `writeTask`.
+// The replay itself talks to the Vikunja client directly: it is the queue's own sender.
+
+/** One change to one existing task: how to send it, and how to put it in the queue. */
+export interface TaskWriteSpec {
+  taskId: number
+  send(): Promise<ApiResult<unknown>>
+  enqueue(): Promise<unknown>
+  /**
+   * 'create' for a write that is not idempotent (a new comment): it is queued only when the request
+   * provably never reached the server, as for a task create. Default 'change'.
+   */
+  kind?: 'change' | 'create'
+}
+
+export type TaskWriteOutcome =
+  /** The server took the change. */
+  | { kind: 'sent'; result: ApiSuccess<unknown> }
+  /**
+   * The change is in the queue. `behind-queue`: the task already had changes waiting; `unreachable`:
+   * the server could not be reached or is having trouble.
+   */
+  | { kind: 'queued'; reason: 'behind-queue' | 'unreachable'; /** What the enqueue of a create returned (a comment's temp id). */ enqueued?: unknown }
+  /** Nothing was sent or queued; `result` says why (the server refused it, or the caller cannot queue). */
+  | { kind: 'refused'; result: ApiError }
+
+/** Said to a caller that cannot queue (it needs the server's answer) when changes are still waiting for the task. */
+export const WAITING_TO_SYNC_ERROR =
+  'This task has changes waiting to sync, so it was not changed on the server. Try again once they have synced.'
+
+export interface TaskWriteDeps {
+  queue: OfflineQueue
+  /** Ask for a replay soon: the server just answered, or a change joined a queue that is waiting. */
+  requestReplay?: () => void
+}
+
+const titleMeta = (title?: string): { title?: string } => (title ? { title } : {})
+
+/** Specs for the writes the app makes to an existing task (its fields, labels, assignees and comments). */
+export const taskWrites = {
+  update(
+    queue: OfflineQueue,
+    api: { updateTask(id: number, patch: Record<string, unknown>): Promise<ApiResult<unknown>> },
+    taskId: number,
+    patch: Record<string, unknown>,
+    title?: string
+  ): TaskWriteSpec {
+    return {
+      taskId,
+      send: () => api.updateTask(taskId, patch),
+      enqueue: () => queue.enqueueUpdate(taskId, patch, titleMeta(title)),
+    }
+  },
+  delete(
+    queue: OfflineQueue,
+    api: { deleteTask(id: number): Promise<ApiResult<unknown>> },
+    taskId: number,
+    title?: string
+  ): TaskWriteSpec {
+    return {
+      taskId,
+      send: () => api.deleteTask(taskId),
+      enqueue: () => queue.enqueueDelete(taskId, titleMeta(title)),
+    }
+  },
+  addLabel(
+    queue: OfflineQueue,
+    api: { addLabelToTask(taskId: number, labelId: number): Promise<ApiResult<unknown>> },
+    taskId: number,
+    label: { id: number; title?: string },
+    title?: string
+  ): TaskWriteSpec {
+    return {
+      taskId,
+      send: () => api.addLabelToTask(taskId, label.id),
+      enqueue: () => queue.enqueueAddLabel(taskId, label.title ? { id: label.id, title: label.title } : { id: label.id }, titleMeta(title)),
+    }
+  },
+  addAssignee(
+    queue: OfflineQueue,
+    api: { addTaskAssignee(taskId: number, userId: number): Promise<ApiResult<unknown>> },
+    taskId: number,
+    user: { id: number; username?: string },
+    title?: string
+  ): TaskWriteSpec {
+    return {
+      taskId,
+      send: () => api.addTaskAssignee(taskId, user.id),
+      enqueue: () => queue.enqueueAddAssignee(taskId, user.id, { ...titleMeta(title), ...(user.username ? { username: user.username } : {}) }),
+    }
+  },
+  removeAssignee(
+    queue: OfflineQueue,
+    api: { removeTaskAssignee(taskId: number, userId: number): Promise<ApiResult<unknown>> },
+    taskId: number,
+    user: { id: number; username?: string },
+    title?: string
+  ): TaskWriteSpec {
+    return {
+      taskId,
+      send: () => api.removeTaskAssignee(taskId, user.id),
+      enqueue: () => queue.enqueueRemoveAssignee(taskId, user.id, { ...titleMeta(title), ...(user.username ? { username: user.username } : {}) }),
+    }
+  },
+  createComment(
+    queue: OfflineQueue,
+    api: { createTaskComment(taskId: number, html: string): Promise<ApiResult<unknown>> },
+    taskId: number,
+    html: string,
+    title?: string
+  ): TaskWriteSpec {
+    return {
+      taskId,
+      kind: 'create',
+      send: () => api.createTaskComment(taskId, html),
+      enqueue: () => queue.enqueueCreateComment(taskId, html, titleMeta(title)),
+    }
+  },
+  updateComment(
+    queue: OfflineQueue,
+    api: { updateTaskComment(taskId: number, commentId: number, html: string): Promise<ApiResult<unknown>> },
+    taskId: number,
+    commentId: number,
+    html: string,
+    title?: string
+  ): TaskWriteSpec {
+    return {
+      taskId,
+      send: () => api.updateTaskComment(taskId, commentId, html),
+      enqueue: () => queue.enqueueUpdateComment(taskId, commentId, html, titleMeta(title)),
+    }
+  },
+  deleteComment(
+    queue: OfflineQueue,
+    api: { deleteTaskComment(taskId: number, commentId: number): Promise<ApiResult<unknown>> },
+    taskId: number,
+    commentId: number,
+    title?: string
+  ): TaskWriteSpec {
+    return {
+      taskId,
+      send: () => api.deleteTaskComment(taskId, commentId),
+      enqueue: () => queue.enqueueDeleteComment(taskId, commentId, titleMeta(title)),
+    }
+  },
+  removeLabel(
+    queue: OfflineQueue,
+    api: { removeLabelFromTask(taskId: number, labelId: number): Promise<ApiResult<unknown>> },
+    taskId: number,
+    labelId: number,
+    title?: string
+  ): TaskWriteSpec {
+    return {
+      taskId,
+      send: () => api.removeLabelFromTask(taskId, labelId),
+      enqueue: () => queue.enqueueRemoveLabel(taskId, labelId, titleMeta(title)),
+    }
+  },
+}
+
+// Requests that change tasks leave one at a time, whatever task they are for. Vikunja's default
+// database is SQLite, which answers parallel writes with "database is locked" (a 500). A bulk change
+// from the selection bar or the context menu used to send one request per task at once and lost
+// some of them to the offline queue. The renderer still updates its caches optimistically; only the
+// requests wait for each other.
+//
+// When the server cannot be reached the request in front fails only after the network timeout
+// (about 10 s). The requests behind it would each wait their own timeout in turn, so a bulk change
+// of 30 tasks would hang for minutes before the last one reached the offline queue. A network
+// failure therefore fails every waiting request at once, without sending it, with an error the
+// callers classify as queueable. A request that arrives later tries the network again.
+let sending = false
+const sendWaiting: Array<(skipped: ApiError | null) => void> = []
+
+/**
+ * What a request that was never sent answers after an earlier one failed on the network. It reads as
+ * a connection error: nothing reached the server, so even a create may be queued safely.
+ */
+export const NOT_SENT_AFTER_NETWORK_FAILURE: ApiError = {
+  success: false,
+  error: 'Network error: the server could not be reached, so this change was not sent (ENETUNREACH)',
+}
+
+/** Whether a result is a failure to reach the server (no HTTP status, a retriable error text). */
+function isNetworkFailure(result: unknown): boolean {
+  if (!result || typeof result !== 'object') return false
+  const r = result as { success?: unknown; error?: unknown; statusCode?: unknown }
+  return r.success === false && typeof r.error === 'string' && r.statusCode === undefined && isRetriableError(r.error)
+}
+
+/**
+ * Run a request after every earlier one has finished (successfully or not). It starts at once when
+ * none is running. If the request in front fails on the network, this one is not sent and answers
+ * `NOT_SENT_AFTER_NETWORK_FAILURE` (every caller passes API results, which have that shape).
+ */
+export async function sendSerially<T>(send: () => Promise<T>): Promise<T> {
+  if (sending) {
+    const skipped = await new Promise<ApiError | null>((resolve) => sendWaiting.push(resolve))
+    if (skipped) return skipped as unknown as T
+  } else {
+    sending = true
+  }
+  let unreachable = false
+  try {
+    const result = await send()
+    unreachable = isNetworkFailure(result)
+    return result
+  } finally {
+    if (unreachable && sendWaiting.length > 0) {
+      for (const waiting of sendWaiting.splice(0)) waiting(NOT_SENT_AFTER_NETWORK_FAILURE)
+      sending = false
+    } else {
+      const next = sendWaiting.shift()
+      if (next) next(null)
+      else sending = false
+    }
+  }
+}
+
+// One chain of pending writes per task and queue. Entries remove themselves when the chain drains.
+const chains = new WeakMap<OfflineQueue, Map<number, Promise<void>>>()
+
+function runInOrder<T>(queue: OfflineQueue, taskId: number, step: () => Promise<T>): Promise<T> {
+  let byTask = chains.get(queue)
+  if (!byTask) {
+    byTask = new Map()
+    chains.set(queue, byTask)
+  }
+  const tasks = byTask
+  const run = (tasks.get(taskId) ?? Promise.resolve()).then(step)
+  const tail = run.then(
+    () => undefined,
+    () => undefined
+  )
+  tasks.set(taskId, tail)
+  void tail.then(() => {
+    if (tasks.get(taskId) === tail) tasks.delete(taskId)
+  })
+  return run
+}
+
+const saveFailed = (error: unknown, statusCode?: number): ApiError => ({
+  success: false,
+  error: `Could not save offline: ${error instanceof Error ? error.message : String(error)}`,
+  ...(statusCode !== undefined ? { statusCode } : {}),
+})
+
+/**
+ * Make one change to an existing task. `options.queue` says whether the caller can live with the
+ * change being queued: true for the main window's edits and Quick View, false for a caller that
+ * needs the server's answer (it then gets a refusal instead of a queued change).
+ */
+export function writeTask(deps: TaskWriteDeps, spec: TaskWriteSpec, options: Pick<TaskWriteOptions, 'queue'> = {}): Promise<TaskWriteOutcome> {
+  const { queue } = deps
+  const canQueue = options.queue === true
+
+  const enqueue = async (reason: 'behind-queue' | 'unreachable', original?: { statusCode?: number }): Promise<TaskWriteOutcome> => {
+    let enqueued: unknown
+    try {
+      enqueued = await spec.enqueue()
+    } catch (err) {
+      return { kind: 'refused', result: saveFailed(err, original?.statusCode) }
+    }
+    if (reason === 'behind-queue') deps.requestReplay?.()
+    // A queued create answers what the queue made of it (a comment's temp id); a change answers nothing more.
+    return spec.kind === 'create' ? { kind: 'queued', reason, enqueued } : { kind: 'queued', reason }
+  }
+
+  return runInOrder(queue, spec.taskId, async (): Promise<TaskWriteOutcome> => {
+    if (queue.hasPendingFor(spec.taskId)) {
+      if (!canQueue) return { kind: 'refused', result: { success: false, error: WAITING_TO_SYNC_ERROR } }
+      return enqueue('behind-queue')
+    }
+
+    let result: ApiResult<unknown>
+    try {
+      result = await sendSerially(spec.send)
+    } catch (err) {
+      result = { success: false, error: err instanceof Error ? err.message : String(err) }
+    }
+    if (result.success) {
+      // The server answered: a good moment to send what is waiting for other tasks.
+      if (queue.counts().pending > 0) deps.requestReplay?.()
+      return { kind: 'sent', result }
+    }
+    if (canQueue && isQueueableFailure(result, spec.kind ?? 'change')) return enqueue('unreachable', result)
+    return { kind: 'refused', result }
+  })
+}
+
+/** What a queue-aware IPC call answers: the server's result, the queued marker, or the refusal. */
+export function taskWriteReply(outcome: TaskWriteOutcome): ApiResult<unknown> | QueuedWriteReply {
+  if (outcome.kind === 'sent') return outcome.result
+  if (outcome.kind === 'queued') return { success: true, queued: true, data: null }
+  return outcome.result
+}
+
+/** Read the optional trailing argument of a task write call; anything else means "cannot queue". */
+export function parseTaskWriteOptions(value: unknown): TaskWriteOptions {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+  const raw = value as Record<string, unknown>
+  const options: TaskWriteOptions = {}
+  if (raw.queue === true) options.queue = true
+  if (typeof raw.title === 'string' && raw.title) options.title = raw.title
+  if (typeof raw.labelTitle === 'string' && raw.labelTitle) options.labelTitle = raw.labelTitle
+  if (typeof raw.username === 'string' && raw.username) options.username = raw.username
+  return options
+}

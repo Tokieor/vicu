@@ -1,0 +1,396 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from '@tanstack/react-router'
+import { RefreshCw, CheckCircle2, ListChecks, Play } from 'lucide-react'
+import { cn } from '@/lib/cn'
+import {
+  useReviewTree,
+  flattenReviewTree,
+  useMarkReviewed,
+  useRestoreReviewDescription,
+  type ReviewTreeNode,
+} from '@/hooks/use-review'
+import { useAppConfig } from '@/hooks/use-app-config'
+import { useSelectionStore } from '@/stores/selection-store'
+import { useReviewNoticeStore } from '@/stores/review-notice-store'
+import { toast, UNDO_TOAST_MS, useToastStore } from '@/stores/toast-store'
+import { ProjectBranch } from '@/components/review/ProjectBranch'
+import { SmartListIcon } from '@/components/shared/SmartListIcon'
+import { PageHeader } from '@/components/shared/PageHeader'
+import { Button } from '@/components/shared/Button'
+import { EmptyState } from '@/components/shared/EmptyState'
+import { ReadingScroll } from '@/components/layout/ReadingScroll'
+import type { Project } from '@/lib/vikunja-types'
+
+type Tab = 'due' | 'all'
+
+const REVIEW_TOAST_KEY = 'review-reviewed'
+
+function isEditableTarget(el: EventTarget | null): boolean {
+  if (!(el instanceof HTMLElement)) return false
+  const tag = el.tagName
+  return tag === 'INPUT' || tag === 'TEXTAREA' || el.isContentEditable
+}
+
+export function ReviewView() {
+  const [tab, setTab] = useState<Tab>('due')
+  const [reviewedThisSession, setReviewedThisSession] = useState<ReadonlySet<number>>(new Set())
+  const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set())
+  const [focusedId, setFocusedId] = useState<number | null>(null)
+
+  const due = useReviewTree('due', reviewedThisSession)
+  const all = useReviewTree('all', reviewedThisSession)
+  const markReviewed = useMarkReviewed()
+  const restoreDescription = useRestoreReviewDescription()
+  const errorNotice = useReviewNoticeStore((s) => s.error)
+  const clearErrorNotice = useReviewNoticeStore((s) => s.clearError)
+  const collapseTasks = useSelectionStore((s) => s.collapseAll)
+  const { data: cfg } = useAppConfig()
+  const navigate = useNavigate()
+  const defaultCadence = cfg?.review?.default_cadence_days ?? 14
+
+  const currentTree = tab === 'due' ? due.data : all.data
+  const isLoading = tab === 'due' ? due.isLoading : all.isLoading
+
+  // Progress reflects the review workload (the "due" set), independent of tab.
+  const { total, done } = useMemo(() => {
+    const flat = flattenReviewTree(due.data)
+    const workload = flat.filter((n) => n.status.isOverdue || reviewedThisSession.has(n.project.id))
+    return {
+      total: workload.length,
+      done: workload.filter((n) => reviewedThisSession.has(n.project.id)).length,
+    }
+  }, [due.data, reviewedThisSession])
+  const remaining = total - done
+  const allCount = useMemo(() => flattenReviewTree(all.data).length, [all.data])
+
+  const navList = useMemo(() => flattenReviewTree(currentTree), [currentTree])
+
+  const toggleExpand = (id: number) => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  // "Marked X reviewed, Undo" is an app toast (UNDO_TOAST_MS, paused while the pointer or focus is on it).
+  const showReviewedToast = (prevProject: Project) => {
+    toast.success(`Marked ${prevProject.title} reviewed`, {
+      key: REVIEW_TOAST_KEY,
+      durationMs: UNDO_TOAST_MS,
+      action: { label: 'Undo', onAction: () => handleUndo(prevProject) },
+    })
+  }
+
+  const handleMarkReviewed = (node: ReviewTreeNode) => {
+    const prevProject = node.project
+    // The row fades and focus moves on right away; this is rolled back if the save
+    // fails, and the "reviewed" toast only appears once the server accepted it.
+    setReviewedThisSession((prev) => new Set(prev).add(prevProject.id))
+    setExpandedIds((prev) => {
+      const next = new Set(prev)
+      next.delete(prevProject.id)
+      return next
+    })
+    markReviewed.mutate(
+      { project: prevProject },
+      {
+        onSuccess: () => showReviewedToast(prevProject),
+        onError: () =>
+          setReviewedThisSession((prev) => {
+            const next = new Set(prev)
+            next.delete(prevProject.id)
+            return next
+          }),
+      },
+    )
+
+    // Advance focus to the next still-due project.
+    const list = navList
+    const idx = list.findIndex((n) => n.project.id === prevProject.id)
+    const nextDue = list
+      .slice(idx + 1)
+      .find((n) => n.status.isOverdue && !reviewedThisSession.has(n.project.id) && n.project.id !== prevProject.id)
+    if (nextDue) setFocusedId(nextDue.project.id)
+  }
+
+  const handleUndo = (undone: Project) => {
+    restoreDescription.mutate(
+      { project: undone },
+      { onError: () => setReviewedThisSession((prev) => new Set(prev).add(undone.id)) },
+    )
+    setReviewedThisSession((prev) => {
+      const next = new Set(prev)
+      next.delete(undone.id)
+      return next
+    })
+  }
+
+  const collapseEverything = () => {
+    setExpandedIds(new Set())
+    collapseTasks()
+  }
+
+  // Keyboard model — refs keep a single listener reading the latest state.
+  const kbd = useRef({ navList, focusedId, handleMarkReviewed, toggleExpand, collapseEverything })
+  kbd.current = { navList, focusedId, handleMarkReviewed, toggleExpand, collapseEverything }
+
+  useEffect(() => {
+    const moveFocus = (delta: number) => {
+      const list = kbd.current.navList
+      if (list.length === 0) return
+      const i = list.findIndex((n) => n.project.id === kbd.current.focusedId)
+      const next = i === -1 ? (delta > 0 ? 0 : list.length - 1) : Math.max(0, Math.min(list.length - 1, i + delta))
+      const id = list[next].project.id
+      setFocusedId(id)
+      document.querySelector(`[data-review-project="${id}"]`)?.scrollIntoView({ block: 'nearest' })
+    }
+    const focusedNode = () => kbd.current.navList.find((n) => n.project.id === kbd.current.focusedId) ?? null
+
+    const handler = (e: KeyboardEvent) => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (isEditableTarget(e.target)) return
+      switch (e.key) {
+        case 'j':
+        case 'J':
+        case 'ArrowDown':
+          e.preventDefault()
+          moveFocus(1)
+          break
+        case 'k':
+        case 'K':
+        case 'ArrowUp':
+          e.preventDefault()
+          moveFocus(-1)
+          break
+        case 'Enter':
+        case ' ': {
+          const node = focusedNode()
+          if (node) {
+            e.preventDefault()
+            kbd.current.toggleExpand(node.project.id)
+          }
+          break
+        }
+        case 'r':
+        case 'R': {
+          const node = focusedNode()
+          if (node) {
+            e.preventDefault()
+            kbd.current.handleMarkReviewed(node)
+          }
+          break
+        }
+        case 'Escape':
+          kbd.current.collapseEverything()
+          break
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [])
+
+  // The toast belongs to this screen: leaving it takes the toast away.
+  useEffect(() => () => useToastStore.getState().remove(REVIEW_TOAST_KEY), [])
+
+  // A failed save stays visible long enough to read, then clears itself.
+  useEffect(() => {
+    if (!errorNotice) return
+    const timer = setTimeout(clearErrorNotice, 10000)
+    return () => clearTimeout(timer)
+  }, [errorNotice, clearErrorNotice])
+
+  const allCaughtUp = tab === 'due' && !isLoading && currentTree.length === 0
+
+  return (
+    <div className="relative flex h-full flex-col" style={{ background: 'var(--bg-primary)' }}>
+      {/* Header */}
+      <PageHeader
+        title="Review"
+        icon={<SmartListIcon list="review" className="h-5 w-5" />}
+        subtitle={
+          <>
+            Click a project to review tasks in place. Press{' '}
+            <kbd
+              style={{
+                fontFamily: '"SF Mono", ui-monospace, Menlo, Consolas, monospace',
+                fontSize: 'var(--type-caption-size)',
+                padding: '1px 5px',
+                borderRadius: 3,
+                background: 'var(--bg-hover)',
+                border: '1px solid var(--border-color)',
+              }}
+            >
+              R
+            </kbd>{' '}
+            to mark reviewed.
+          </>
+        }
+        actions={
+          <>
+          {/* Guided organizing (cross-app semantics 14.4, 14.7): one project at a time, and the weekly checklist. */}
+          {remaining > 0 && (
+            <Button variant="primary" onClick={() => void navigate({ to: '/guided/$session', params: { session: 'review' } })}>
+              <Play aria-hidden="true" className="h-4 w-4" /> Start review
+            </Button>
+          )}
+          <Button onClick={() => void navigate({ to: '/weekly-review' })}>
+            <ListChecks aria-hidden="true" className="h-4 w-4" /> Weekly review
+          </Button>
+          <span
+            style={{
+              fontSize: 'var(--type-chip-size)',
+              fontWeight: 600,
+              padding: '2px 8px',
+              borderRadius: 999,
+              background: 'rgb(var(--accent-purple-rgb) / 0.15)',
+              color: 'var(--accent-purple)',
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {remaining} due
+          </span>
+          </>
+        }
+      />
+      <div className="mx-auto w-full max-w-reading shrink-0 pr-[var(--scrollbar-size)]">
+      <div className="px-6 pb-3.5" style={{ borderBottom: '1px solid var(--border-color)' }}>
+        {/* Tabs */}
+        <div style={{ display: 'flex', gap: 6, marginTop: 12 }} role="tablist">
+          <TabButton active={tab === 'due'} onClick={() => setTab('due')} count={remaining}>
+            Due
+          </TabButton>
+          <TabButton active={tab === 'all'} onClick={() => setTab('all')} count={allCount}>
+            All tracked
+          </TabButton>
+        </div>
+
+        {/* Progress */}
+        <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ flex: 1, height: 4, borderRadius: 2, background: 'var(--bg-hover)', overflow: 'hidden' }}>
+            <div
+              style={{
+                width: total > 0 ? `${(done / total) * 100}%` : '0%',
+                height: '100%',
+                background: 'var(--accent-purple)',
+                transition: 'width var(--dur-fade-base) var(--ease-standard)',
+              }}
+            />
+          </div>
+          <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontVariantNumeric: 'tabular-nums' }}>
+            {done} / {total}
+          </span>
+        </div>
+      </div>
+      </div>
+
+      {/* Tree list */}
+      <ReadingScroll columnClassName="flex flex-col px-4 pb-6 pt-2">
+        {isLoading && <div className="px-2 py-4 text-sm text-[var(--text-secondary)]">Loading…</div>}
+
+        {allCaughtUp && (
+          <EmptyState
+            icon={RefreshCw}
+            identity="review"
+            title="All reviewed"
+            subtitle={`You're caught up. Next review available in ${defaultCadence} days.`}
+          />
+        )}
+
+        {!isLoading && !allCaughtUp && currentTree.length === 0 && (
+          <EmptyState
+            icon={RefreshCw}
+            identity="review"
+            title="No tracked projects"
+            subtitle="Projects appear here once review tracking is enabled in Settings."
+          />
+        )}
+
+        {!isLoading &&
+          currentTree.map((node) => (
+            <ProjectBranch
+              key={node.project.id}
+              node={node}
+              depth={0}
+              expandedIds={expandedIds}
+              onToggle={toggleExpand}
+              reviewedIds={reviewedThisSession}
+              onMarkReviewed={handleMarkReviewed}
+              focusedId={focusedId}
+              onFocus={setFocusedId}
+            />
+          ))}
+      </ReadingScroll>
+
+      {/* Error notice: failed saves must not pass silently */}
+      {errorNotice && (
+        <div
+          role="alert"
+          className="absolute left-1/2 -translate-x-1/2 shadow-lg"
+          style={{
+            bottom: 20,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            maxWidth: 'min(560px, calc(100% - 32px))',
+            padding: '8px 12px 8px 14px',
+            borderRadius: 8,
+            background: 'var(--bg-secondary)',
+            border: '1px solid var(--accent-red)',
+            fontSize: 13,
+            color: 'var(--text-primary)',
+            zIndex: 31,
+          }}
+        >
+          <span>{errorNotice.message}</span>
+          <button
+            type="button"
+            onClick={clearErrorNotice}
+            style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent-red)', cursor: 'pointer' }}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function TabButton({
+  active,
+  onClick,
+  count,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  count: number
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={cn('flex items-center gap-1.5 rounded-control px-3 py-1 text-section transition-colors')}
+      style={
+        active
+          ? { background: 'rgb(var(--accent-purple-rgb) / 0.15)', color: 'var(--accent-purple)', fontWeight: 600 }
+          : { background: 'transparent', color: 'var(--text-secondary)', fontWeight: 500 }
+      }
+    >
+      {children}
+      <span
+        style={{
+          fontSize: 11,
+          fontWeight: 600,
+          fontVariantNumeric: 'tabular-nums',
+          color: active ? 'var(--accent-purple)' : 'var(--text-secondary)',
+        }}
+      >
+        {count}
+      </span>
+    </button>
+  )
+}

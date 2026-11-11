@@ -1,0 +1,280 @@
+import { useState, useEffect, useId } from 'react'
+import { SelectionPill } from './SelectionPill'
+import { useNavigate, useMatches } from '@tanstack/react-router'
+import { useDroppable } from '@dnd-kit/core'
+import { Pencil, Trash2, X } from 'lucide-react'
+import { useLabels } from '@/hooks/use-labels'
+import { useCreateLabel, useUpdateLabel, useDeleteLabel } from '@/hooks/use-task-mutations'
+import { useConfirmDelete } from '@/hooks/use-confirm-delete'
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { Dialog } from '@/components/overlay/Dialog'
+import { Menu, MenuItem } from '@/components/overlay/Menu'
+import { useSidebarStore } from '@/stores/sidebar-store'
+import { cn } from '@/lib/cn'
+import { focusTargetOf } from '@/lib/focus-target'
+import type { Label } from '@/lib/vikunja-types'
+import { normalizeHex } from '@/lib/constants'
+
+function LabelDialog({
+  open,
+  label,
+  onClose,
+}: {
+  open: boolean
+  label: Label | null
+  onClose: () => void
+}) {
+  const titleId = useId()
+  const [title, setTitle] = useState('')
+  const [hexColor, setHexColor] = useState('')
+  const createLabel = useCreateLabel()
+  const updateLabel = useUpdateLabel()
+
+  useEffect(() => {
+    if (open) {
+      setTitle(label?.title ?? '')
+      setHexColor(normalizeHex(label?.hex_color) ?? '')
+    }
+  }, [open, label])
+
+  if (!open) return null
+
+  const handleSave = () => {
+    const trimmed = title.trim()
+    if (!trimmed) return
+
+    if (label) {
+      updateLabel.mutate(
+        { id: label.id, label: { title: trimmed, hex_color: hexColor || undefined } },
+        { onSuccess: onClose }
+      )
+    } else {
+      createLabel.mutate(
+        { title: trimmed, hex_color: hexColor || undefined },
+        { onSuccess: onClose }
+      )
+    }
+  }
+
+  return (
+    <Dialog open onClose={onClose} labelledBy={titleId} className="w-[360px]">
+      <div>
+        <div className="flex items-center justify-between border-b border-[var(--border-color)] px-5 py-3">
+          <h2 id={titleId} className="text-sm font-semibold text-[var(--text-primary)]">
+            {label ? 'Edit Label' : 'New Label'}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="rounded-control p-1 text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="space-y-4 p-5">
+          <div>
+            <label className="mb-1 block text-xs text-[var(--text-secondary)]">Name</label>
+            <input
+              type="text"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Label name"
+              data-autofocus
+              className="w-full rounded-control border border-[var(--border-color)] bg-[var(--bg-secondary)] px-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]"
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSave()
+              }}
+            />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs text-[var(--text-secondary)]">Color</label>
+            <div className="flex flex-wrap gap-1.5">
+              {['#e74c3c', '#e67e22', '#f1c40f', '#2ecc71', '#1abc9c', '#3498db', '#9b59b6', '#e91e63', '#795548', '#607d8b', '#34495e', '#000000'].map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setHexColor(c)}
+                  className={cn(
+                    'h-6 w-6 rounded-full transition-transform hover:scale-110 motion-reduce:hover:scale-100',
+                    hexColor === c && 'ring-2 ring-[var(--text-primary)] ring-offset-1 ring-offset-[var(--bg-primary)]'
+                  )}
+                  style={{ backgroundColor: c }}
+                />
+              ))}
+            </div>
+            <div className="mt-2 flex items-center gap-2">
+              <span
+                className="h-6 w-6 shrink-0 rounded-full border border-[var(--border-color)]"
+                style={{ backgroundColor: hexColor || 'var(--bg-hover)' }}
+              />
+              <input
+                type="text"
+                value={hexColor}
+                onChange={(e) => setHexColor(e.target.value)}
+                placeholder="#hex"
+                className="flex-1 rounded-control border border-[var(--border-color)] bg-[var(--bg-secondary)] px-3 py-1.5 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]"
+              />
+              {hexColor && (
+                <button
+                  type="button"
+                  onClick={() => setHexColor('')}
+                  className="text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 border-t border-[var(--border-color)] px-5 py-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-control border border-[var(--border-color)] px-4 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)]"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={!title.trim()}
+            className={cn(
+              'rounded-control px-4 py-1.5 text-xs font-medium transition-colors',
+              'bg-accent-fill text-on-accent hover:bg-accent-fill/90',
+              'disabled:cursor-not-allowed disabled:opacity-50'
+            )}
+          >
+            {label ? 'Save' : 'Create'}
+          </button>
+        </div>
+      </div>
+    </Dialog>
+  )
+}
+
+function TagListItem({
+  label,
+  onContextMenu,
+}: {
+  label: Label
+  onContextMenu: (e: React.MouseEvent, label: Label) => void
+}) {
+  const navigate = useNavigate()
+  const matches = useMatches()
+  const currentPath = matches[matches.length - 1]?.pathname ?? ''
+  const isActive = currentPath === `/tag/${label.id}`
+
+  const { setNodeRef, isOver } = useDroppable({
+    id: `label-${label.id}`,
+    data: { type: 'label', labelId: label.id },
+  })
+
+  return (
+    <button
+      ref={setNodeRef}
+      key={label.id}
+      type="button"
+      onClick={() => navigate({ to: '/tag/$labelId', params: { labelId: String(label.id) } })}
+      onContextMenu={(e) => onContextMenu(e, label)}
+      className={cn(
+        'relative flex h-7 items-center gap-2.5 rounded-control px-2.5 text-xs transition-colors',
+        isOver
+          ? 'bg-accent-blue/15 ring-1 ring-[var(--accent-blue)]'
+          : isActive
+            ? 'text-[var(--text-primary)]'
+            : 'text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
+      )}
+    >
+      {isActive && !isOver && <SelectionPill />}
+      <span
+        className="h-2.5 w-2.5 shrink-0 rounded-full bg-[var(--text-secondary)]"
+        style={normalizeHex(label.hex_color) ? { backgroundColor: normalizeHex(label.hex_color) } : undefined}
+      />
+      <span className="min-w-0 flex-1 truncate text-left">{label.title}</span>
+    </button>
+  )
+}
+
+export function TagList() {
+  const { data: labels, isLoading } = useLabels()
+  const deleteLabel = useDeleteLabel()
+  const { confirmDelete, dialogProps: deleteDialogProps } = useConfirmDelete()
+  const { labelDialogOpen, setLabelDialogOpen } = useSidebarStore()
+
+  const [editingLabel, setEditingLabel] = useState<Label | null>(null)
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    label: Label
+    /** The row's button: the delete confirmation gives focus back here. */
+    opener: HTMLElement | null
+  } | null>(null)
+
+  const handleContextMenu = (e: React.MouseEvent, label: Label) => {
+    e.preventDefault()
+    setContextMenu({ x: e.clientX, y: e.clientY, label, opener: focusTargetOf(e.currentTarget) })
+  }
+
+  const handleCloseDialog = () => {
+    setLabelDialogOpen(false)
+    setEditingLabel(null)
+  }
+
+  if (isLoading || !labels) return null
+
+  return (
+    <>
+      <div className="flex flex-col gap-0.5 px-2">
+        {labels.map((label) => (
+          <TagListItem key={label.id} label={label} onContextMenu={handleContextMenu} />
+        ))}
+      </div>
+
+      {/* Context menu: the Menu primitive at the pointer (arrow keys, Escape, focus return, kept in the window). */}
+      {contextMenu && (
+        <Menu
+          key={`${contextMenu.label.id}:${contextMenu.x}:${contextMenu.y}`}
+          anchorPoint={{ x: contextMenu.x, y: contextMenu.y }}
+          label={`${contextMenu.label.title} actions`}
+          onClose={() => setContextMenu(null)}
+        >
+          <MenuItem
+            icon={<Pencil />}
+            onSelect={() => {
+              setEditingLabel(contextMenu.label)
+              setLabelDialogOpen(true)
+            }}
+          >
+            Edit
+          </MenuItem>
+          <MenuItem
+            icon={<Trash2 />}
+            danger
+            onSelect={async () => {
+              const label = contextMenu.label
+              const ok = await confirmDelete('Delete this label? It will be removed from all tasks. This cannot be undone.', {
+                returnFocusTo: contextMenu.opener,
+              })
+              if (ok) {
+                deleteLabel.mutate(label.id)
+              }
+            }}
+          >
+            Delete
+          </MenuItem>
+        </Menu>
+      )}
+
+      <LabelDialog
+        open={labelDialogOpen}
+        label={editingLabel}
+        onClose={handleCloseDialog}
+      />
+      <ConfirmDialog {...deleteDialogProps} />
+    </>
+  )
+}

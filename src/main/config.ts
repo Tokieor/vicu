@@ -1,0 +1,422 @@
+import { app } from 'electron'
+import { join } from 'path'
+import { isMac } from './platform'
+import { readFileWithBackup, writeFileAtomic } from './atomic-file'
+import type {
+  AppConfig,
+  ConnectionFields,
+  ReviewConfig,
+  SecondaryProject,
+  ViewerFilter,
+} from '../shared/config-types'
+import { isCategoryId } from '../shared/project-categories'
+import { todayRoutinesLimit } from '../shared/today-routines'
+
+// The config types are shared with the renderer (src/shared/config-types.ts).
+export type {
+  AppConfig,
+  AuthMethod,
+  ConnectionFields,
+  ReviewConfig,
+  SecondaryProject,
+  ViewerFilter,
+} from '../shared/config-types'
+
+// Platform-aware hotkey defaults
+export const DEFAULT_QUICK_ENTRY_HOTKEY = isMac ? 'Command+Shift+Space' : 'Alt+Shift+V'
+export const DEFAULT_QUICK_VIEW_HOTKEY = isMac ? 'Command+Shift+B' : 'Alt+Shift+B'
+
+const CONFIG_FILENAME = 'config.json'
+
+const DEFAULT_CONFIG: AppConfig = {
+  vikunja_url: '',
+  api_token: '',
+  inbox_project_id: 0,
+  theme: 'system',
+  clock_format: 'system',
+  row_density: 'compact',
+  subtask_display: 'inside_task',
+  review: {
+    enabled: true,
+    default_cadence_days: 14,
+    exclude_inbox: true,
+  },
+}
+
+function getConfigPath(): string {
+  return join(app.getPath('userData'), CONFIG_FILENAME)
+}
+
+// In-memory cache: the config file is only ever written through saveConfig,
+// so disk reads after the first are redundant. Callers receive clones —
+// mutating a returned config object must not leak into the cache.
+let cachedConfig: AppConfig | null | undefined
+
+export function loadConfig(): AppConfig | null {
+  if (cachedConfig === undefined) {
+    cachedConfig = readConfigFromDisk()
+  }
+  return cachedConfig ? structuredClone(cachedConfig) : null
+}
+
+function parseConfigFile(raw: string): AppConfig {
+  const parsed: unknown = JSON.parse(raw)
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('config.json does not contain an object')
+  }
+  return normalizeConfig(parsed as Record<string, unknown>)
+}
+
+function readConfigFromDisk(): AppConfig | null {
+  // Falls back to config.json.bak (and logs it) when the file does not parse.
+  const loaded = readFileWithBackup(getConfigPath(), parseConfigFile)
+  if (!loaded) return null
+  const config = loaded.value
+
+  // One-time migration: replace Windows hotkey defaults that never worked on macOS
+  if (isMac && !config.hotkeys_migrated_macos) {
+    let changed = false
+    if (config.quick_entry_hotkey === 'Alt+Shift+V') {
+      config.quick_entry_hotkey = DEFAULT_QUICK_ENTRY_HOTKEY
+      changed = true
+    }
+    if (config.quick_view_hotkey === 'Alt+Shift+B') {
+      config.quick_view_hotkey = DEFAULT_QUICK_VIEW_HOTKEY
+      changed = true
+    }
+    config.hotkeys_migrated_macos = true
+    if (changed) {
+      try {
+        saveConfig(config)
+      } catch (err) {
+        console.warn('[Config] Could not save the hotkey migration:', err instanceof Error ? err.message : err)
+      }
+    }
+  }
+
+  return config
+}
+
+function normalizeReview(raw: unknown): ReviewConfig {
+  const src = (raw && typeof raw === 'object') ? raw as Record<string, unknown> : {}
+  const n = Number(src.default_cadence_days)
+  const cadence = Number.isFinite(n) ? Math.min(365, Math.max(1, Math.round(n))) : 14
+  return {
+    enabled: typeof src.enabled === 'boolean' ? src.enabled : true,
+    default_cadence_days: cadence,
+    exclude_inbox: typeof src.exclude_inbox === 'boolean' ? src.exclude_inbox : true,
+  }
+}
+
+/** A list of project ids: whole positive numbers, no duplicates, ascending. Missing or malformed is undefined. */
+function normalizeProjectIds(raw: unknown): number[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const ids = raw.filter((id): id is number => typeof id === 'number' && Number.isInteger(id) && id > 0)
+  return [...new Set(ids)].sort((a, b) => a - b)
+}
+
+function normalizeCategoryIds(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  return [...new Set(raw.filter(isCategoryId))].sort()
+}
+
+/** Smart list names: lower case words, so one a newer version adds is kept too. */
+function normalizeListNames(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  return [...new Set(raw.filter((id): id is string => typeof id === 'string' && /^[a-z][a-z_]{0,31}$/.test(id)))].sort()
+}
+
+export function normalizeConfig(raw: Record<string, unknown>): AppConfig {
+  return {
+    vikunja_url: typeof raw.vikunja_url === 'string'
+      ? raw.vikunja_url.replace(/\/+$/, '')
+      : DEFAULT_CONFIG.vikunja_url,
+    api_token: typeof raw.api_token === 'string'
+      ? raw.api_token
+      : DEFAULT_CONFIG.api_token,
+    inbox_project_id: typeof raw.inbox_project_id === 'number'
+      ? raw.inbox_project_id
+      : DEFAULT_CONFIG.inbox_project_id,
+    auth_method: raw.auth_method === 'oidc' ? 'oidc' : raw.auth_method === 'password' ? 'password' : 'api_token',
+    theme: raw.theme === 'light' || raw.theme === 'dark' || raw.theme === 'system'
+      ? raw.theme
+      : DEFAULT_CONFIG.theme,
+    clock_format: raw.clock_format === '12h' || raw.clock_format === '24h' ? raw.clock_format : 'system',
+    row_density: raw.row_density === 'comfortable' ? 'comfortable' : 'compact',
+    window_bounds: isWindowBounds(raw.window_bounds) ? raw.window_bounds : undefined,
+    sidebar_width: typeof raw.sidebar_width === 'number' ? raw.sidebar_width : undefined,
+    sidebar_collapsed_projects: normalizeProjectIds(raw.sidebar_collapsed_projects),
+    sidebar_collapsed_categories: normalizeCategoryIds(raw.sidebar_collapsed_categories),
+    sidebar_hidden_lists: normalizeListNames(raw.sidebar_hidden_lists),
+    custom_lists: Array.isArray(raw.custom_lists) ? raw.custom_lists as AppConfig['custom_lists'] : undefined,
+    custom_lists_sync: raw.custom_lists_sync && typeof raw.custom_lists_sync === 'object'
+      ? raw.custom_lists_sync as AppConfig['custom_lists_sync']
+      : undefined,
+    saved_filters: raw.saved_filters && typeof raw.saved_filters === 'object' && Array.isArray((raw.saved_filters as { known?: unknown }).known)
+      ? raw.saved_filters as AppConfig['saved_filters']
+      : undefined,
+    synced_prefs_sync: raw.synced_prefs_sync && typeof raw.synced_prefs_sync === 'object'
+      ? raw.synced_prefs_sync as AppConfig['synced_prefs_sync']
+      : undefined,
+    known_user: isKnownUser(raw.known_user) ? { server: raw.known_user.server, id: raw.known_user.id } : undefined,
+    account_owner: isKnownUser(raw.account_owner) ? { server: raw.account_owner.server, id: raw.account_owner.id } : undefined,
+    // Quick Entry / Quick View
+    quick_entry_enabled: raw.quick_entry_enabled === true,
+    quick_view_enabled: raw.quick_view_enabled === true,
+    quick_entry_hotkey: typeof raw.quick_entry_hotkey === 'string' ? raw.quick_entry_hotkey : DEFAULT_QUICK_ENTRY_HOTKEY,
+    quick_view_hotkey: typeof raw.quick_view_hotkey === 'string' ? raw.quick_view_hotkey : DEFAULT_QUICK_VIEW_HOTKEY,
+    // Off until the user records one (docs/voice-input.md).
+    voice_hotkey: typeof raw.voice_hotkey === 'string' ? raw.voice_hotkey : '',
+    quick_entry_default_project_id: typeof raw.quick_entry_default_project_id === 'number'
+      ? raw.quick_entry_default_project_id : undefined,
+    exclamation_today: raw.exclamation_today !== false,
+    project_cycle_modifier: raw.project_cycle_modifier === 'alt' || raw.project_cycle_modifier === 'ctrl+alt'
+      ? raw.project_cycle_modifier : 'ctrl',
+    secondary_projects: Array.isArray(raw.secondary_projects)
+      ? raw.secondary_projects as SecondaryProject[] : [],
+    quick_entry_position: isPosition(raw.quick_entry_position) ? raw.quick_entry_position : undefined,
+    quick_view_position: isPosition(raw.quick_view_position) ? raw.quick_view_position : undefined,
+    viewer_filter: isViewerFilter(raw.viewer_filter) ? raw.viewer_filter : {
+      project_ids: [],
+      sort_by: 'due_date',
+      order_by: 'asc',
+      due_date_filter: 'all',
+      include_today_all_projects: false,
+    },
+    launch_on_startup: raw.launch_on_startup === true,
+    start_hidden: raw.start_hidden === true,
+    standalone_mode: raw.standalone_mode === true,
+    show_today_overdue_badge: raw.show_today_overdue_badge === true,
+    show_project_progress: raw.show_project_progress !== false,
+    show_project_task_count: raw.show_project_task_count === true,
+    // Obsidian
+    obsidian_mode: raw.obsidian_mode === 'off' || raw.obsidian_mode === 'always' ? raw.obsidian_mode : 'ask',
+    obsidian_api_key: typeof raw.obsidian_api_key === 'string' ? raw.obsidian_api_key : '',
+    obsidian_port: typeof raw.obsidian_port === 'number' ? raw.obsidian_port : 27124,
+    obsidian_vault_name: typeof raw.obsidian_vault_name === 'string' ? raw.obsidian_vault_name : '',
+    // Browser
+    browser_link_mode: raw.browser_link_mode === 'ask' || raw.browser_link_mode === 'always' ? raw.browser_link_mode : 'off',
+    browser_extension_id: typeof raw.browser_extension_id === 'string' ? raw.browser_extension_id : '',
+    // Notifications
+    notifications_enabled: raw.notifications_enabled === true,
+    notifications_persistent: raw.notifications_persistent === true,
+    notifications_daily_reminder_enabled: raw.notifications_daily_reminder_enabled !== false,
+    notifications_daily_reminder_time: typeof raw.notifications_daily_reminder_time === 'string'
+      ? raw.notifications_daily_reminder_time : '08:00',
+    notifications_secondary_reminder_enabled: raw.notifications_secondary_reminder_enabled === true,
+    notifications_secondary_reminder_time: typeof raw.notifications_secondary_reminder_time === 'string'
+      ? raw.notifications_secondary_reminder_time : '16:00',
+    notifications_overdue_enabled: raw.notifications_overdue_enabled !== false,
+    notifications_due_today_enabled: raw.notifications_due_today_enabled !== false,
+    notifications_upcoming_enabled: raw.notifications_upcoming_enabled === true,
+    notifications_sound: raw.notifications_sound !== false,
+    // Task reminder settings
+    notifications_task_reminder_sound: raw.notifications_task_reminder_sound !== false,
+    notifications_task_reminder_persistent: raw.notifications_task_reminder_persistent === true,
+    notifications_default_reminder_offset: typeof raw.notifications_default_reminder_offset === 'number'
+      ? raw.notifications_default_reminder_offset : 0,
+    notifications_default_reminder_relative_to: raw.notifications_default_reminder_relative_to === 'start_date'
+      || raw.notifications_default_reminder_relative_to === 'end_date'
+      ? raw.notifications_default_reminder_relative_to : 'due_date',
+    // Update checker
+    update_check_dismissed_version: typeof raw.update_check_dismissed_version === 'string'
+      ? raw.update_check_dismissed_version : undefined,
+    // Migration flags
+    hotkeys_migrated_macos: raw.hotkeys_migrated_macos === true,
+    // NLP task parser
+    nlp_enabled: raw.nlp_enabled !== false,
+    nlp_syntax_mode: raw.nlp_syntax_mode === 'vikunja' ? 'vikunja' : 'todoist',
+    confirm_before_delete: raw.confirm_before_delete !== false,
+    subtask_display: raw.subtask_display === 'expandable' ? 'expandable' : 'inside_task',
+    // Task completion sound
+    task_completion_sound_enabled: raw.task_completion_sound_enabled !== false,
+    task_completion_sound_path: typeof raw.task_completion_sound_path === 'string'
+      ? raw.task_completion_sound_path : null,
+    last_file_dialog_directory: typeof raw.last_file_dialog_directory === 'string'
+      ? raw.last_file_dialog_directory : null,
+    last_username: typeof raw.last_username === 'string' ? raw.last_username : undefined,
+    urgency_mode: raw.urgency_mode === 'important' ? 'important' : 'today',
+    last_used_project_id: typeof raw.last_used_project_id === 'number' ? raw.last_used_project_id : undefined,
+    last_used_label_id: typeof raw.last_used_label_id === 'number' ? raw.last_used_label_id : undefined,
+    review: normalizeReview(raw.review),
+    routines_enabled: raw.routines_enabled !== false,
+    routines_in_today: raw.routines_in_today !== false,
+    routines_today_limit: todayRoutinesLimit(raw.routines_today_limit),
+    routines_today_folded: raw.routines_today_folded === true,
+    planner_enabled: raw.planner_enabled === true,
+    planner_view: raw.planner_view === '3days' || raw.planner_view === 'week' ? raw.planner_view : 'day',
+    planner_source: typeof raw.planner_source === 'string' ? raw.planner_source : undefined,
+    planner_show_routines: raw.planner_show_routines !== false,
+    planner_nudge: typeof raw.planner_nudge === 'string' && /^\d{2}:\d{2}$/.test(raw.planner_nudge) ? raw.planner_nudge : null,
+  }
+}
+
+function isKnownUser(v: unknown): v is { server: string; id: number } {
+  if (!v || typeof v !== 'object') return false
+  const u = v as Record<string, unknown>
+  return typeof u.server === 'string' && typeof u.id === 'number' && Number.isInteger(u.id) && u.id > 0
+}
+
+function isPosition(v: unknown): v is { x: number; y: number } {
+  if (!v || typeof v !== 'object') return false
+  const p = v as Record<string, unknown>
+  return typeof p.x === 'number' && typeof p.y === 'number'
+}
+
+function isViewerFilter(v: unknown): v is ViewerFilter {
+  if (!v || typeof v !== 'object') return false
+  const f = v as Record<string, unknown>
+  return Array.isArray(f.project_ids) && typeof f.sort_by === 'string'
+}
+
+function isWindowBounds(v: unknown): v is { x: number; y: number; width: number; height: number } {
+  if (!v || typeof v !== 'object') return false
+  const b = v as Record<string, unknown>
+  return (
+    typeof b.x === 'number' &&
+    typeof b.y === 'number' &&
+    typeof b.width === 'number' &&
+    typeof b.height === 'number'
+  )
+}
+
+export function saveConfig(config: AppConfig): void {
+  const snapshot = structuredClone(config)
+  // Temp file + rename, keeping config.json.bak (see atomic-file.ts)
+  writeFileAtomic(getConfigPath(), JSON.stringify(config, null, 2), { backup: true })
+  // The cache follows the disk: after a failed write it still holds what is on disk, so a caller
+  // that is told the save failed does not keep seeing the unsaved values until the next restart.
+  cachedConfig = snapshot
+}
+
+/**
+ * Save a change nobody is waiting for (window bounds, popup positions): a failure is logged and
+ * reported as `false` instead of being thrown into a timer, where it would show Electron's
+ * main-process error dialog.
+ */
+export function saveConfigQuietly(config: AppConfig, what: string): boolean {
+  try {
+    saveConfig(config)
+    return true
+  } catch (err) {
+    console.warn(`[Config] Could not save ${what}:`, err instanceof Error ? err.message : err)
+    return false
+  }
+}
+
+// --- Merging renderer changes into the current config -----------------------
+//
+// The renderer must never replace the whole config: it only holds a snapshot, and
+// main keeps changing fields of its own (window bounds, sidebar width, popup
+// positions, last dialog directory, dismissed update version, custom lists...).
+// These helpers merge a narrow change into the config as it is *now*.
+
+/** Data that belongs to one server/account: IDs and state that mean nothing elsewhere. */
+const ACCOUNT_SPECIFIC_KEYS = [
+  'sidebar_collapsed_projects',
+  'sidebar_collapsed_categories',
+  'custom_lists',
+  'custom_lists_sync',
+  'saved_filters',
+  'synced_prefs_sync',
+  'known_user',
+  'account_owner',
+  'quick_entry_default_project_id',
+  'secondary_projects',
+  'viewer_filter',
+  'standalone_mode',
+  'last_used_project_id',
+  'last_used_label_id',
+  'last_username',
+] as const satisfies readonly (keyof AppConfig)[]
+
+/**
+ * The keys that say which account the app is signed in to. Changing them is an account change: the
+ * previous account's cached lists, known user id and queued changes must go (see accountChanged in
+ * sync.ts), which only `save-connection-config` does. A config patch is refused when it names one,
+ * so a Settings control or a future caller cannot switch accounts around that cleanup (F3).
+ */
+export const CONNECTION_KEYS: readonly string[] = ['vikunja_url', 'api_token', 'auth_method', 'standalone_mode', 'last_username']
+
+/** The connection keys a patch tries to change. */
+export function connectionKeysIn(patch: object): string[] {
+  return Object.keys(patch).filter((key) => CONNECTION_KEYS.includes(key))
+}
+
+/** Owned by main (the custom list service with its own IPCs and sync, the known user); never taken from a renderer patch. */
+const MAIN_OWNED_KEYS: ReadonlySet<string> = new Set(['custom_lists', 'custom_lists_sync', 'saved_filters', 'synced_prefs_sync', 'known_user', 'account_owner'])
+
+/** Every key of AppConfig, derived from the normalizer so the two cannot drift apart. */
+const CONFIG_KEYS: ReadonlySet<string> = new Set(Object.keys(normalizeConfig({})))
+
+function trimUrl(url: unknown): string {
+  return typeof url === 'string' ? url.replace(/\/+$/, '') : ''
+}
+
+function resetAccountData(config: Record<string, unknown>): void {
+  for (const key of ACCOUNT_SPECIFIC_KEYS) config[key] = undefined
+}
+
+/** What a different user of the same server keeps: the connection it signed in with. */
+const KEPT_FOR_ANOTHER_USER: ReadonlySet<string> = new Set(['standalone_mode', 'last_username'])
+
+/**
+ * The config without the previous user's data, for a different user of the same server: the
+ * account-specific keys and the Inbox (that user's project) go, the connection and every device
+ * preference stay. The synced documents start empty, so the next sync reads the new user's own.
+ */
+export function withoutOtherUsersData(config: AppConfig): AppConfig {
+  const next: Record<string, unknown> = { ...config, inbox_project_id: 0 }
+  for (const key of ACCOUNT_SPECIFIC_KEYS) if (!KEPT_FOR_ANOTHER_USER.has(key)) next[key] = undefined
+  return normalizeConfig(next)
+}
+
+/**
+ * Apply a connection change (setup, OIDC/password login, disconnect) to the
+ * existing config. Only the connection fields change. Switching to another server
+ * also drops the previous account's data; every preference (theme, hotkeys,
+ * notifications, quick entry, sounds...) is kept.
+ */
+export function applyConnectionFields(existing: AppConfig | null, conn: ConnectionFields): AppConfig {
+  const url = trimUrl(conn.vikunja_url)
+  const sameServer = existing !== null && trimUrl(existing.vikunja_url) === url
+  const merged: Record<string, unknown> = {
+    ...(existing ?? {}),
+    vikunja_url: url,
+    api_token: conn.api_token,
+    auth_method: conn.auth_method,
+    inbox_project_id: conn.inbox_project_id ?? (sameServer ? existing.inbox_project_id : 0),
+  }
+  if (!sameServer) resetAccountData(merged)
+  return normalizeConfig(merged)
+}
+
+/**
+ * Merge a partial change from the renderer into the current config. Only known
+ * keys are taken, and never the custom list slice. A key whose value is
+ * undefined is reset to its default. Values are replaced at the top level (a
+ * patched `review` or `viewer_filter` object replaces the old one). Pointing
+ * `vikunja_url` at another server drops the previous account's data. The IPC
+ * handler never lets a connection key reach this function (see CONNECTION_KEYS).
+ */
+export function applyConfigPatch(current: AppConfig, patch: Record<string, unknown>): AppConfig {
+  const merged: Record<string, unknown> = { ...current }
+  for (const key of Object.keys(patch)) {
+    if (!CONFIG_KEYS.has(key) || MAIN_OWNED_KEYS.has(key)) continue
+    merged[key] = patch[key]
+  }
+  if (trimUrl(merged.vikunja_url) !== trimUrl(current.vikunja_url)) resetAccountData(merged)
+  return normalizeConfig(merged)
+}
+
+/** Shape check for connection fields arriving over IPC. */
+export function isConnectionFields(v: unknown): v is ConnectionFields {
+  if (!v || typeof v !== 'object') return false
+  const c = v as Record<string, unknown>
+  return (
+    typeof c.vikunja_url === 'string' &&
+    typeof c.api_token === 'string' &&
+    (c.auth_method === 'api_token' || c.auth_method === 'oidc' || c.auth_method === 'password') &&
+    (c.inbox_project_id === undefined || (typeof c.inbox_project_id === 'number' && Number.isFinite(c.inbox_project_id)))
+  )
+}

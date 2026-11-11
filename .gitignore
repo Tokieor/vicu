@@ -1,0 +1,20 @@
+node_modules/
+out/
+dist/
+.vite/
+*.log
+*.tsbuildinfo
+config.json
+
+# Built by scripts/build-voice-helper.mjs (npm run voice:helper)
+resources/voice/vicu-speech-macos
+
+# Local files
+.DS_Store
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+.claude/worktrees/
+
+# Built by scripts/build-speech.mjs (npm run speech:lib)
+resources/speech/
+.speech-build/

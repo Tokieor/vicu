@@ -1,0 +1,884 @@
+import { app, BrowserWindow, globalShortcut, nativeTheme, powerMonitor, screen } from 'electron'
+import { createMainWindow, createQuickEntryWindow, createQuickViewWindow } from './window-manager'
+import { registerIpcHandlers } from './ipc-handlers'
+import { loadConfig, saveConfigQuietly, type AppConfig, DEFAULT_QUICK_ENTRY_HOTKEY, DEFAULT_QUICK_VIEW_HOTKEY } from './config'
+import { isQuickEntryEnabled, isQuickViewEnabled } from '../shared/config-types'
+import { authManager } from './auth/auth-manager'
+import { createTray, destroyTray, hasTray } from './tray'
+import { returnFocusToPreviousWindow, destroyDummyWindow } from './focus'
+import { registerQuickEntryState } from './quick-entry-state'
+import { initNotifications, refreshTaskRemindersOnFocus, rescheduleNotifications, stopNotifications, setNotificationsMainWindow } from './notifications'
+import { getObsidianContext, getForegroundProcessName, getForegroundWindowHandle, prewarmForegroundCheck, rememberShownObsidianContext, type ObsidianNoteContext } from './obsidian-client'
+import { foregroundNeeds, lookUpForeground } from './quick-entry/foreground-gate'
+import { getBrowserContext, type BrowserContext } from './browser-client'
+import { getBrowserUrlFromWindow, prewarmUrlReader, shutdownUrlReader, BROWSER_PROCESSES } from './window-url-reader'
+import { isRegistered, unregisterHosts, registerHosts } from './browser-host-registration'
+import { checkForUpdates } from './update-checker'
+import { startUpdateChecks, type UpdateChecksHandle } from './update-schedule'
+import { isMac, isWindows, isLinux } from './platform'
+import { setupApplicationMenu } from './app-menu'
+import { storeAPIToken, getAPIToken, API_TOKEN_NO_EXPIRY } from './auth/token-store'
+import { clearTaskBadge, reapplyTaskBadge } from './badge'
+import { replayPendingActions } from './sync'
+import { flushOfflineQueue } from './offline/service'
+import { flushTaskCache } from './cache'
+import { syncCustomLists } from './custom-list-service'
+import { startSavedFilterImport } from './saved-filter-service'
+import { syncSyncedPrefs } from './synced-preferences'
+import { parseHiddenArg, shouldStartHidden } from './login-item-settings'
+import { applyLaunchOnStartup } from './launch-on-startup'
+import { startupEnv } from './startup-env'
+import { buildShortcutStatus } from './shortcut-status'
+import { handleTrusted } from './secure-ipc'
+import { cleanAttachmentTempDir } from './attachment-temp'
+import { registerWebSecurity } from './web-security'
+import { registerTextContextMenu } from './text-context-menu'
+import { APP_ID } from './app-id'
+import { cancelVoiceSession } from './voice/service'
+import { shutdownAi } from './ai/ipc'
+
+let mainWindow: BrowserWindow | null = null
+let quickEntryWindow: BrowserWindow | null = null
+let quickViewWindow: BrowserWindow | null = null
+let startupComplete = false
+let updateChecks: UpdateChecksHandle | null = null
+let lastCustomListFocusSync = 0
+/** Tracks intentional app quit (tray Quit / before-quit). */
+let appIsQuitting = false
+
+// Register shared state so ipc-handlers can access these without a circular import.
+// The actual function bodies are defined below; the closures capture the module-level
+// variables and will always reflect the current state when called.
+registerQuickEntryState({
+  getMainWindow: () => mainWindow,
+  getQuickEntryWindow: () => quickEntryWindow,
+  getQuickViewWindow: () => quickViewWindow,
+  hideQuickEntry: () => hideQuickEntry(),
+  hideQuickView: () => hideQuickView(),
+  setViewerHeight: (h) => setViewerHeight(h),
+  setQuickEntryHeight: (h) => setQuickEntryHeight(h),
+  applyQuickEntrySettings: () => applyQuickEntrySettings(),
+  getLastShortcutStatus: () => lastShortcutStatus,
+})
+
+// --- Quick Entry/View constants ---
+const SHADOW_PADDING = 20
+const DRAG_HANDLE_HEIGHT = 14
+let viewerDesiredHeight = 460 + DRAG_HANDLE_HEIGHT + SHADOW_PADDING * 2
+let isResettingViewerHeight = false
+
+// --- Drag hover polling ---
+let dragHoverTimer: ReturnType<typeof setInterval> | null = null
+let mainEntryDragHover = false
+let viewerDragHover = false
+
+function checkDragHover(win: BrowserWindow | null, prevHover: boolean): boolean {
+  if (!win || win.isDestroyed() || !win.isVisible()) return prevHover
+  const bounds = win.getBounds()
+  const cursor = screen.getCursorScreenPoint()
+  const inRegion =
+    cursor.x >= bounds.x + SHADOW_PADDING &&
+    cursor.x < bounds.x + bounds.width - SHADOW_PADDING &&
+    cursor.y >= bounds.y + SHADOW_PADDING &&
+    cursor.y < bounds.y + SHADOW_PADDING + DRAG_HANDLE_HEIGHT
+  if (inRegion !== prevHover) {
+    try { win.webContents.send('drag-hover', inRegion) } catch { /* ignore */ }
+  }
+  return inRegion
+}
+
+function startDragHoverPolling(): void {
+  if (dragHoverTimer) return
+  dragHoverTimer = setInterval(() => {
+    mainEntryDragHover = checkDragHover(quickEntryWindow, mainEntryDragHover)
+    viewerDragHover = checkDragHover(quickViewWindow, viewerDragHover)
+  }, 50)
+}
+
+function stopDragHoverPolling(): void {
+  const entryVisible = quickEntryWindow && !quickEntryWindow.isDestroyed() && quickEntryWindow.isVisible()
+  const viewerVisible = quickViewWindow && !quickViewWindow.isDestroyed() && quickViewWindow.isVisible()
+  if (entryVisible || viewerVisible) return
+  if (dragHoverTimer) {
+    clearInterval(dragHoverTimer)
+    dragHoverTimer = null
+  }
+  mainEntryDragHover = false
+  viewerDragHover = false
+}
+
+// --- Blur debounce (prevents blur firing immediately after show on Windows) ---
+let quickEntryShowTime = 0
+let quickViewShowTime = 0
+const BLUR_DEBOUNCE_MS = 300
+
+// --- Quick Entry show/hide ---
+async function showQuickEntry(): Promise<void> {
+  if (!quickEntryWindow) return
+  const config = loadConfig()
+
+  // 1. Detect foreground app — must happen before we steal focus, so it cannot move after show().
+  //    Only a link feature (Obsidian note, browser URL) uses the answer, so with both off the
+  //    lookup is skipped and the window shows at once (D-PERF-1). On Windows it is sync FFI
+  //    (~0μs), on Linux there is none, and on macOS it is osascript, capped at 400 ms.
+  // Obsidian integration is disabled on Linux by design — Wayland restricts
+  // foreground-process detection and "always-fire" Obsidian fetches would
+  // surprise users who aren't exclusively working in Obsidian. Users on Linux
+  // can still open Obsidian deep links via plain text URIs in task notes.
+  const needs = foregroundNeeds(config, isLinux)
+  const fgProcess = await lookUpForeground(needs, getForegroundProcessName)
+
+  // 2. Capture the browser's HWND before anything else (~0μs, Windows only).
+  //    This allows PowerShell to use the correct window even after Electron steals focus.
+  const fgHwnd = needs.browser ? getForegroundWindowHandle() : 0
+
+  const isObsidian = fgProcess === 'Obsidian' || fgProcess === 'obsidian'
+  const wantObsidian = needs.obsidian && isObsidian
+  // Browser link: on Linux we trust the extension cache's 3-second freshness
+  // window to gate stale data instead of foreground checks, so skip the
+  // BROWSER_PROCESSES gate (fgProcess is always '' on Wayland).
+  const processIsBrowser = isLinux ? true : BROWSER_PROCESSES.has(fgProcess)
+  const wantBrowser = !isObsidian && needs.browser && processIsBrowser
+
+  // 3. Browser context: try extension cache first (<1ms sync file read).
+  let browserContext: BrowserContext | null = null
+  let browserFallbackPromise: Promise<BrowserContext | null> | null = null
+  if (wantBrowser) {
+    browserContext = getBrowserContext() // extension cache (<1ms)
+    if (!browserContext) {
+      // 4. Cache miss — spawn PowerShell with captured HWND (non-blocking).
+      //    The script uses the pre-captured HWND, so it works even after window.show().
+      browserFallbackPromise = Promise.race([
+        getBrowserUrlFromWindow(fgProcess, fgHwnd || undefined),
+        new Promise<null>(resolve => setTimeout(() => resolve(null), 1500))
+      ])
+    }
+  }
+
+  // 5. Position window
+  if (config?.quick_entry_position) {
+    const displays = screen.getAllDisplays()
+    const pos = config.quick_entry_position
+    const onScreen = displays.some((d) => {
+      const bounds = d.workArea
+      return pos.x >= bounds.x && pos.x < bounds.x + bounds.width &&
+             pos.y >= bounds.y && pos.y < bounds.y + bounds.height
+    })
+    if (onScreen) {
+      quickEntryWindow.setPosition(pos.x, pos.y)
+    } else {
+      centerQuickEntry()
+    }
+  } else {
+    centerQuickEntry()
+  }
+
+  // 6. Send cached browser context before window-shown so renderer has it during animation
+  if (browserContext && config?.browser_link_mode) {
+    quickEntryWindow.webContents.send('browser-context', {
+      ...browserContext,
+      mode: config.browser_link_mode,
+    })
+  }
+
+  // 7. Show window IMMEDIATELY — only sync operations before this point
+  quickEntryWindow.show()
+  quickEntryWindow.focus()
+  quickEntryShowTime = Date.now()
+  quickEntryWindow.webContents.send('window-shown')
+  startDragHoverPolling()
+
+  // 8. Await PowerShell result (already running in background with correct HWND)
+  if (browserFallbackPromise && config?.browser_link_mode) {
+    const win = quickEntryWindow
+    browserFallbackPromise.then((ctx) => {
+      if (ctx && !win.isDestroyed() && win.isVisible()) {
+        win.webContents.send('browser-context', { ...ctx, mode: config.browser_link_mode })
+      }
+    }).catch(() => {})
+  }
+
+  // 9. Obsidian: HTTP to localhost doesn't need foreground — safe to run after show
+  if (wantObsidian) {
+    const win = quickEntryWindow
+    Promise.race([
+      getObsidianContext(),
+      new Promise<null>(resolve => setTimeout(() => resolve(null), 350))
+    ]).then((ctx) => {
+      if (ctx && !win.isDestroyed() && win.isVisible() && config?.obsidian_mode) {
+        // Remembered here, not in getObsidianContext: only a context the window actually shows
+        // can be linked, and the uid is written only when a task is saved with it (D-OBS-1).
+        rememberShownObsidianContext(ctx)
+        win.webContents.send('obsidian-context', { ...ctx, mode: config.obsidian_mode })
+      }
+    }).catch(() => {})
+  }
+}
+
+function centerQuickEntry(): void {
+  if (!quickEntryWindow) return
+  const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
+  const [winW] = quickEntryWindow.getSize()
+  quickEntryWindow.setPosition(Math.round((sw - winW) / 2), Math.round(sh * 0.3))
+}
+
+function hideQuickEntry(): void {
+  if (!quickEntryWindow) return
+  rememberShownObsidianContext(null)
+  quickEntryWindow.webContents.send('window-hidden')
+  quickEntryWindow.hide()
+  stopDragHoverPolling()
+  returnFocusToPreviousWindow()
+}
+
+function toggleQuickEntry(): void {
+  if (!quickEntryWindow) return
+  if (quickEntryWindow.isVisible()) hideQuickEntry()
+  else showQuickEntry()
+}
+
+function setQuickEntryHeight(height: number): void {
+  if (!quickEntryWindow || quickEntryWindow.isDestroyed()) return
+  if (!quickEntryWindow.isVisible()) return
+  const clamped = Math.max(80, Math.min(720, Math.round(height))) + SHADOW_PADDING * 2
+  const [currentWidth, currentHeight] = quickEntryWindow.getSize()
+  if (Math.abs(currentHeight - clamped) <= 1) return
+  quickEntryWindow.setSize(currentWidth, clamped)
+}
+
+// --- Quick View show/hide ---
+function showQuickView(): void {
+  if (!quickViewWindow) return
+  const config = loadConfig()
+
+  // Pre-size to desired height
+  const [currentWidth] = quickViewWindow.getSize()
+  isResettingViewerHeight = true
+  quickViewWindow.setSize(currentWidth, viewerDesiredHeight)
+  isResettingViewerHeight = false
+
+  if (config?.quick_view_position) {
+    const displays = screen.getAllDisplays()
+    const pos = config.quick_view_position
+    const onScreen = displays.some((d) => {
+      const bounds = d.workArea
+      return pos.x >= bounds.x && pos.x < bounds.x + bounds.width &&
+             pos.y >= bounds.y && pos.y < bounds.y + bounds.height
+    })
+    if (onScreen) {
+      quickViewWindow.setPosition(pos.x, pos.y)
+    } else {
+      centerQuickView()
+    }
+  } else {
+    centerQuickView()
+  }
+
+  quickViewWindow.show()
+  quickViewWindow.focus()
+  quickViewShowTime = Date.now()
+  quickViewWindow.webContents.send('viewer-shown')
+  startDragHoverPolling()
+}
+
+function centerQuickView(): void {
+  if (!quickViewWindow) return
+  const { width: sw, height: sh } = screen.getPrimaryDisplay().workAreaSize
+  const [winW] = quickViewWindow.getSize()
+  quickViewWindow.setPosition(Math.round((sw - winW) / 2), Math.round(sh * 0.2))
+}
+
+function hideQuickView(): void {
+  if (!quickViewWindow) return
+  quickViewWindow.webContents.send('viewer-hidden')
+  quickViewWindow.hide()
+  stopDragHoverPolling()
+  returnFocusToPreviousWindow()
+}
+
+function toggleQuickView(): void {
+  if (!quickViewWindow) return
+  if (quickViewWindow.isVisible()) hideQuickView()
+  else showQuickView()
+}
+
+// --- Viewer height management ---
+function setViewerHeight(height: number): void {
+  if (!quickViewWindow || quickViewWindow.isDestroyed()) return
+  const clamped = Math.max(60, Math.min(460 + DRAG_HANDLE_HEIGHT, Math.round(height))) + SHADOW_PADDING * 2
+  viewerDesiredHeight = clamped
+  if (!quickViewWindow.isVisible()) return
+  const [currentWidth] = quickViewWindow.getSize()
+  isResettingViewerHeight = true
+  quickViewWindow.setSize(currentWidth, clamped)
+  isResettingViewerHeight = false
+}
+
+// --- Shortcut registration ---
+// Latest global-shortcut registration state. Surfaced to the renderer via the
+// `get-global-shortcut-status` IPC so Settings can show a warning banner when
+// registration fails.
+//
+// On Wayland, Electron 44+ binds shortcuts through the GlobalShortcuts portal
+// (requires a valid reverse-DNS desktopName matching the installed .desktop
+// file). Registration can succeed globally after the user consents. We only
+// flag `waylandLimited` when an enabled shortcut actually failed to register,
+// so Settings can offer the DE keyboard-shortcut fallback.
+const isWaylandSession = isLinux && (
+  process.env.XDG_SESSION_TYPE === 'wayland' || !!process.env.WAYLAND_DISPLAY
+)
+
+let lastShortcutStatus: { entry: boolean; viewer: boolean; waylandLimited: boolean } = {
+  entry: false,
+  viewer: false,
+  waylandLimited: false,
+}
+
+function registerQuickEntryShortcuts(config: AppConfig): { entry: boolean; viewer: boolean; waylandLimited: boolean } {
+  let entryRegistered = false
+  let viewerRegistered = false
+  const entryEnabled = isQuickEntryEnabled(config)
+  const viewerEnabled = isQuickViewEnabled(config)
+
+  if (entryEnabled) {
+    const entryHotkey = config.quick_entry_hotkey || DEFAULT_QUICK_ENTRY_HOTKEY
+    try {
+      entryRegistered = globalShortcut.register(entryHotkey, toggleQuickEntry)
+      if (!entryRegistered) console.error(`Failed to register Quick Entry shortcut: ${entryHotkey}`)
+    } catch (err) {
+      console.error(`Error registering entry shortcut "${entryHotkey}":`, err)
+    }
+  }
+
+  if (viewerEnabled) {
+    const viewerHotkey = config.quick_view_hotkey || DEFAULT_QUICK_VIEW_HOTKEY
+    try {
+      viewerRegistered = globalShortcut.register(viewerHotkey, toggleQuickView)
+      if (!viewerRegistered) console.error(`Failed to register Quick View shortcut: ${viewerHotkey}`)
+    } catch (err) {
+      console.error(`Error registering viewer shortcut "${viewerHotkey}":`, err)
+    }
+  }
+
+  const result = buildShortcutStatus({
+    entryEnabled,
+    viewerEnabled,
+    entryRegistered,
+    viewerRegistered,
+    isWaylandSession,
+  })
+  lastShortcutStatus = result
+  return result
+}
+
+// --- Main window creation + wiring ---
+// Everything window-instance-specific lives here so the window can be
+// recreated on demand (tray "Show Vicu" / second-instance after a close).
+function createAndWireMainWindow(config: AppConfig | null, options: { startHidden?: boolean } = {}): BrowserWindow {
+  const win = createMainWindow(config, options)
+
+  win.on('maximize', () => win.webContents.send('window-maximized-change', true))
+  win.on('unmaximize', () => win.webContents.send('window-maximized-change', false))
+
+  const saveBounds = (): void => {
+    if (win.isDestroyed()) return
+    const bounds = win.getBounds()
+    const current = loadConfig()
+    if (current) {
+      current.window_bounds = bounds
+      saveConfigQuietly(current, 'the window position')
+    }
+  }
+  // 'moved'/'resized' are macOS/Windows-only; 'move'/'resize' fire everywhere
+  // (including Linux) but continuously — debounce the config write.
+  let boundsSaveTimer: NodeJS.Timeout | null = null
+  const scheduleSaveBounds = (): void => {
+    if (boundsSaveTimer) clearTimeout(boundsSaveTimer)
+    boundsSaveTimer = setTimeout(saveBounds, 500)
+  }
+  win.on('move', scheduleSaveBounds)
+  win.on('resize', scheduleSaveBounds)
+  win.on('closed', () => {
+    if (boundsSaveTimer) clearTimeout(boundsSaveTimer)
+  })
+
+  if (process.env.ELECTRON_RENDERER_URL) {
+    win.webContents.openDevTools({ mode: 'detach' })
+  }
+
+  win.on('closed', () => {
+    if (mainWindow === win) mainWindow = null
+  })
+
+  // Windows drops the taskbar overlay icon when the window is hidden and
+  // re-shown. Repaint the badge whenever the window reappears.
+  win.on('show', () => {
+    reapplyTaskBadge()
+  })
+  win.on('focus', () => {
+    // Reminders set on another device are picked up here (throttled inside).
+    refreshTaskRemindersOnFocus()
+    if (Date.now() - lastCustomListFocusSync < 30_000) return
+    lastCustomListFocusSync = Date.now()
+    void syncCustomLists()
+    void syncSyncedPrefs()
+  })
+
+  // Unified close policy, evaluated at close time (not startup time):
+  // hide instead of closing whenever that leaves the user a way back —
+  // always on macOS (dock), elsewhere when the tray is active.
+  win.on('close', (e) => {
+    if (appIsQuitting) return
+    if (isMac || hasTray()) {
+      e.preventDefault()
+      win.hide()
+    }
+  })
+
+  setNotificationsMainWindow(win)
+  return win
+}
+
+// --- Tray setup ---
+function setupTray(): void {
+  if (hasTray()) return
+  createTray({
+    onShowMainWindow: () => {
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        mainWindow = createAndWireMainWindow(loadConfig())
+      }
+      mainWindow.show()
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    },
+    onShowQuickEntry: () => showQuickEntry(),
+    onShowQuickView: () => showQuickView(),
+    onQuit: () => {
+      appIsQuitting = true
+      app.quit()
+    },
+  })
+}
+
+// --- Quick Entry/View initialization ---
+function initQuickEntryWindows(config: AppConfig): void {
+  if (isQuickEntryEnabled(config) && !quickEntryWindow) {
+    quickEntryWindow = createQuickEntryWindow(config)
+    quickEntryWindow.on('close', (e) => {
+      if (!appIsQuitting) {
+        e.preventDefault()
+        hideQuickEntry()
+      }
+    })
+    quickEntryWindow.on('blur', () => {
+      if (quickEntryWindow?.isVisible() && Date.now() - quickEntryShowTime > BLUR_DEBOUNCE_MS) {
+        hideQuickEntry()
+      }
+    })
+    let entryMoveTimer: NodeJS.Timeout | null = null
+    quickEntryWindow.on('move', () => {
+      if (entryMoveTimer) clearTimeout(entryMoveTimer)
+      entryMoveTimer = setTimeout(() => {
+        if (!quickEntryWindow || quickEntryWindow.isDestroyed()) return
+        const [x, y] = quickEntryWindow.getPosition()
+        const current = loadConfig()
+        if (current) {
+          current.quick_entry_position = { x, y }
+          saveConfigQuietly(current, 'the Quick Entry position')
+        }
+      }, 500)
+    })
+  }
+
+  if (isQuickViewEnabled(config) && !quickViewWindow) {
+    quickViewWindow = createQuickViewWindow(config)
+    quickViewWindow.on('close', (e) => {
+      if (!appIsQuitting) {
+        e.preventDefault()
+        hideQuickView()
+      }
+    })
+    quickViewWindow.on('blur', () => {
+      if (quickViewWindow?.isVisible() && Date.now() - quickViewShowTime > BLUR_DEBOUNCE_MS) {
+        hideQuickView()
+      }
+    })
+    let viewerMoveTimer: NodeJS.Timeout | null = null
+    quickViewWindow.on('move', () => {
+      if (viewerMoveTimer) clearTimeout(viewerMoveTimer)
+      viewerMoveTimer = setTimeout(() => {
+        if (!quickViewWindow || quickViewWindow.isDestroyed()) return
+        const [x, y] = quickViewWindow.getPosition()
+        const current = loadConfig()
+        if (current) {
+          current.quick_view_position = { x, y }
+          saveConfigQuietly(current, 'the Quick View position')
+        }
+      }, 500)
+    })
+    // Lock height to desired value
+    quickViewWindow.on('resize', () => {
+      if (isResettingViewerHeight || !quickViewWindow) return
+      const [w, h] = quickViewWindow.getSize()
+      if (h !== viewerDesiredHeight) {
+        isResettingViewerHeight = true
+        quickViewWindow.setSize(w, viewerDesiredHeight)
+        isResettingViewerHeight = false
+      }
+    })
+  }
+}
+
+// "Launch on startup" and "Start hidden": the login item on Windows and macOS, an XDG autostart
+// entry on Linux (see launch-on-startup.ts). A failure here must never break startup or saving.
+function applyStartupSettings(config: AppConfig): void {
+  // A throwaway profile (VICU_USER_DATA_DIR) is for tests: it must not change the real login items.
+  if (process.env.VICU_USER_DATA_DIR) return
+  try {
+    applyLaunchOnStartup(
+      { launchOnStartup: config.launch_on_startup === true, startHidden: config.start_hidden === true },
+      startupEnv(),
+    )
+  } catch (err) {
+    console.error('Could not apply the launch-on-startup setting:', err)
+  }
+}
+
+// Apply quick entry settings (called from IPC when settings change)
+function applyQuickEntrySettings(): { entry: boolean; viewer: boolean; waylandLimited: boolean } {
+  const config = loadConfig()
+  if (!config) {
+    const empty = { entry: false, viewer: false, waylandLimited: false }
+    lastShortcutStatus = empty
+    return empty
+  }
+
+  // Unregister existing shortcuts
+  globalShortcut.unregisterAll()
+
+  const eitherEnabled = isQuickEntryEnabled(config) || isQuickViewEnabled(config)
+
+  if (eitherEnabled) {
+    setupTray()
+    initQuickEntryWindows(config)
+    const result = registerQuickEntryShortcuts(config)
+
+    // Clean up windows that were disabled
+    if (!isQuickEntryEnabled(config) && quickEntryWindow && !quickEntryWindow.isDestroyed()) {
+      quickEntryWindow.destroy()
+      quickEntryWindow = null
+    }
+    if (!isQuickViewEnabled(config) && quickViewWindow && !quickViewWindow.isDestroyed()) {
+      quickViewWindow.destroy()
+      quickViewWindow = null
+    }
+
+    applyStartupSettings(config)
+    return result
+  } else {
+    // Clean up all windows and tray
+    if (quickEntryWindow && !quickEntryWindow.isDestroyed()) {
+      quickEntryWindow.destroy()
+      quickEntryWindow = null
+    }
+    if (quickViewWindow && !quickViewWindow.isDestroyed()) {
+      quickViewWindow.destroy()
+      quickViewWindow = null
+    }
+    destroyTray()
+    if (dragHoverTimer) {
+      clearInterval(dragHoverTimer)
+      dragHoverTimer = null
+    }
+  }
+
+  applyStartupSettings(config)
+  const empty = { entry: false, viewer: false, waylandLimited: false }
+  lastShortcutStatus = empty
+  return empty
+}
+
+// Pin the app name so `app.getPath('userData')` resolves to ~/.config/vicu on
+// Linux whether we're running the packaged AppImage (which has a package.json
+// inside the asar with name: "vicu") or a bare `electron ./out/main/index.js`
+// dev run (which otherwise falls back to Electron's default "Electron" name
+// and diverges from the bundled vicu-bridge.js that hardcodes "vicu").
+app.setName('vicu')
+
+// Test and development runs can use a throwaway profile, so they never read,
+// write or lock against the real one. Must run before the single-instance lock.
+if (process.env.VICU_USER_DATA_DIR) {
+  app.setPath('userData', process.env.VICU_USER_DATA_DIR)
+}
+
+// Navigation, window-open and webview guards for every WebContents (D-SEC-1).
+// Registered before the first window is created.
+registerWebSecurity()
+registerTextContextMenu()
+
+// Linux: force Chromium's "basic" password-store backend. The default is
+// "detect", which tries libsecret (gnome-keyring / KWallet) and falls back
+// to the basic backend if nothing is found. The detection path, however,
+// deadlocks when the secrets service is running but the "login" keyring
+// collection doesn't exist — common on fresh user accounts and minimal
+// desktop installs — and in that state `safeStorage.isEncryptionAvailable()`
+// returns false so `encryptString()` throws. Pinning to "basic" avoids the
+// deadlock and gives safeStorage a working (if obfuscated-not-encrypted)
+// backend on any Linux system without requiring an unlocked keyring.
+// Must be set before `app.whenReady()`.
+if (isLinux) {
+  app.commandLine.appendSwitch('password-store', 'basic')
+}
+
+// CLI argument parsing. Primarily used on Wayland as an escape hatch for
+// Vicu's global hotkeys: users bind their DE's keyboard shortcut to
+// `vicu --quick-entry` / `vicu --quick-view`, and the already-running instance
+// opens the respective window via the second-instance handler below.
+function parseIntent(argv: readonly string[]): 'quick-entry' | 'quick-view' | null {
+  if (argv.includes('--quick-entry')) return 'quick-entry'
+  if (argv.includes('--quick-view')) return 'quick-view'
+  return null
+}
+let startupIntent: 'quick-entry' | 'quick-view' | null = parseIntent(process.argv)
+
+// Single instance lock — quit if another instance is already running
+const gotLock = app.requestSingleInstanceLock()
+if (!gotLock) {
+  app.quit()
+} else {
+  app.on('second-instance', (_event, argv) => {
+    // If the second instance was launched with --quick-entry/--quick-view
+    // (typically from a DE keyboard-shortcut binding on Wayland), show that
+    // window and do NOT raise the main window.
+    const intent = parseIntent(argv)
+    if (intent === 'quick-entry') {
+      showQuickEntry()
+      return
+    }
+    if (intent === 'quick-view') {
+      showQuickView()
+      return
+    }
+    // A launch at login (--hidden) that finds Vicu already running must not raise the window.
+    if (parseHiddenArg(argv)) return
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      mainWindow = createAndWireMainWindow(loadConfig())
+    }
+    mainWindow.show()
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.focus()
+  })
+
+  // Allow self-signed certs for Obsidian Local REST API (localhost only)
+  app.on('certificate-error', (event, _webContents, url, _error, _certificate, callback) => {
+    try {
+      const parsed = new URL(url)
+      const config = loadConfig()
+      const port = config?.obsidian_port || 27124
+      if (parsed.hostname === '127.0.0.1' && parsed.port === String(port)) {
+        event.preventDefault()
+        callback(true)
+        return
+      }
+    } catch { /* fall through */ }
+    callback(false)
+  })
+
+  app.setAppUserModelId(APP_ID)
+
+  app.whenReady().then(async () => {
+    // Attachments opened in a previous session (D-IPC-2). Only the primary
+    // instance gets here, so nothing else is using the folder.
+    cleanAttachmentTempDir(app.getPath('temp'))
+    setupApplicationMenu(() => mainWindow)
+    registerIpcHandlers()
+    if (isWindows) prewarmForegroundCheck()
+    // Don't block window creation on auth recovery (up to 15s offline).
+    // authManager has single-flight refresh, so the renderer's auth:check
+    // joins any in-flight recovery instead of racing it; AppShell already
+    // renders Loading → ReauthView from the auth:check result.
+    void authManager.initialize()
+
+    // Forward auth-required events to all renderer windows
+    authManager.on(() => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        try {
+          if (!win.isDestroyed()) {
+            win.webContents.send('auth-required')
+          }
+        } catch { /* ignore */ }
+      }
+    })
+
+    // One-time migration: move the API token out of config.json into the token store. The store
+    // encrypts it when the OS offers secure storage; when it does not, the token is kept as
+    // written (still better off in auth.json, mode 600) and Settings says so (D-AUTH-4).
+    const preConfig = loadConfig()
+    if (
+      preConfig?.auth_method === 'api_token' &&
+      preConfig.api_token &&
+      !getAPIToken()
+    ) {
+      storeAPIToken(preConfig.api_token, API_TOKEN_NO_EXPIRY)
+      preConfig.api_token = ''
+      saveConfigQuietly(preConfig, 'the API token migration')
+    }
+
+    const config = loadConfig()
+    // Start in the tray when launched at login with "Start hidden" (or with --hidden), but only
+    // when there is a way back: the tray icon exists when Quick Entry or Quick View is on, and
+    // macOS always has the dock.
+    const trayWillExist = !!config && (isQuickEntryEnabled(config) || isQuickViewEnabled(config))
+    const startHidden = !!config && shouldStartHidden({
+      hiddenArg: parseHiddenArg(process.argv),
+      openedAtLogin: isMac && app.getLoginItemSettings().wasOpenedAtLogin,
+      startHiddenSetting: config.start_hidden === true,
+      isMac,
+      canComeBack: isMac || trayWillExist,
+    })
+    mainWindow = createAndWireMainWindow(config, { startHidden })
+    startupComplete = true
+
+    // Sync Electron's native theme with the user's config setting
+    const themeValue = config?.theme ?? 'system'
+    nativeTheme.themeSource = themeValue === 'system' ? 'system' : themeValue
+
+    // Window control IPC handlers
+    handleTrusted('window-minimize', () => mainWindow?.minimize())
+    handleTrusted('window-maximize', () => {
+      if (mainWindow?.isMaximized()) mainWindow.unmaximize()
+      else mainWindow?.maximize()
+    })
+    handleTrusted('window-close', () => mainWindow?.close())
+    handleTrusted('window-is-maximized', () => mainWindow?.isMaximized() ?? false)
+
+    // Initialize notification scheduler
+    initNotifications(mainWindow)
+    powerMonitor.on('resume', () => {
+      // The main window's timers (midnight, polling) may have been paused by sleep.
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('app-resumed')
+      rescheduleNotifications()
+      authManager.onSystemResume()
+      void replayPendingActions()
+      void syncCustomLists()
+      void syncSyncedPrefs()
+    })
+
+    // Replay any offline-queued actions: once shortly after startup, then
+    // every 5 minutes as a safety net while the app runs.
+    setTimeout(() => { void replayPendingActions() }, 10_000)
+    setInterval(() => { void replayPendingActions() }, 5 * 60_000)
+    // Vikunja saved filters are imported after the first custom-list sync (section 3.7).
+    startSavedFilterImport()
+    setTimeout(() => { void syncCustomLists() }, 12_000)
+    setInterval(() => { void syncCustomLists() }, 5 * 60_000)
+    // The synced preferences (the Inbox, the task order) sync whenever custom lists do.
+    setTimeout(() => { void syncSyncedPrefs() }, 12_000)
+    setInterval(() => { void syncSyncedPrefs() }, 5 * 60_000)
+
+    // Auto-register browser native messaging hosts on startup so manifests
+    // always point to the current app's bridge (important when switching
+    // between Vicu and vikunja-quick-entry during development/testing).
+    // Clean up stale registrations if the feature is off.
+    if (config?.browser_link_mode && config.browser_link_mode !== 'off') {
+      registerHosts({ chromeExtensionId: config.browser_extension_id || '' })
+    } else {
+      const reg = isRegistered()
+      if (reg.chrome || reg.firefox) unregisterHosts()
+    }
+
+    // Pre-warm PowerShell + UI Automation assemblies for faster browser URL fallback
+    if (config?.browser_link_mode && config.browser_link_mode !== 'off') {
+      prewarmUrlReader()
+    }
+
+    // Check for updates shortly after start, then every 12 hours: a tray app runs for weeks.
+    // The window is told once per release, and never about the one the user dismissed.
+    updateChecks?.stop()
+    updateChecks = startUpdateChecks({
+      check: () => checkForUpdates(),
+      dismissedVersion: () => loadConfig()?.update_check_dismissed_version,
+      notify: (status) => {
+        if (!mainWindow || mainWindow.isDestroyed()) return false
+        mainWindow.webContents.send('update-available', status)
+        return true
+      },
+    })
+
+    // Quick Entry/View: if either enabled, set up tray + windows + hotkeys.
+    // Require config to be non-null: on first launch loadConfig() returns null, and
+    // initQuickEntryWindows(null) would throw before the user finished setup.
+    if (config && (isQuickEntryEnabled(config) || isQuickViewEnabled(config))) {
+      setupTray()
+      initQuickEntryWindows(config)
+      globalShortcut.unregisterAll() // Clear stale registrations from crashes
+      registerQuickEntryShortcuts(config)
+    }
+    // Once per start, whatever Quick Entry/View are set to: re-asserts the login item (path, the
+    // --hidden argument) or autostart entry, and drops the old-id Windows entry.
+    if (config) applyStartupSettings(config)
+
+    // If the app was launched with --quick-entry/--quick-view (e.g. a DE
+    // keyboard shortcut on Wayland starting a cold instance), open the
+    // requested window and hide the main window so it feels like a hotkey.
+    if (startupIntent === 'quick-entry' && quickEntryWindow) {
+      mainWindow.hide()
+      showQuickEntry()
+    } else if (startupIntent === 'quick-view' && quickViewWindow) {
+      mainWindow.hide()
+      showQuickView()
+    }
+    startupIntent = null
+  })
+
+  app.on('window-all-closed', () => {
+    // Ignore window-all-closed during startup — the silent reauth window
+    // may close before the main window is created, which would quit the app.
+    if (!startupComplete) return
+    // macOS: never quit on window-all-closed (standard macOS behavior)
+    // Windows: only quit if tray is not active
+    if (!isMac && !hasTray()) {
+      app.quit()
+    }
+  })
+
+  app.on('activate', () => {
+    // macOS: dock click or Cmd+Tab — show the existing hidden window
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show()
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      mainWindow.focus()
+    }
+  })
+
+  // The offline queue and task cache are written asynchronously. If a write is still in flight or
+  // queued when the user quits, hold the quit until it is on disk, then quit again.
+  // The assistant's speech engine closes its native handles first (ggml's Metal teardown asserts on
+  // an open one) and its files are written.
+  let offlineStoresFlushed = false
+  app.on('before-quit', (event) => {
+    appIsQuitting = true
+    if (offlineStoresFlushed) return
+    event.preventDefault()
+    void Promise.all([flushOfflineQueue(), flushTaskCache(), shutdownAi()]).finally(() => {
+      offlineStoresFlushed = true
+      app.quit()
+    })
+  })
+
+  app.on('will-quit', () => {
+    updateChecks?.stop()
+    cleanAttachmentTempDir(app.getPath('temp'))
+    stopNotifications()
+    shutdownUrlReader()
+    cancelVoiceSession()
+    destroyDummyWindow()
+    globalShortcut.unregisterAll()
+    if (dragHoverTimer) {
+      clearInterval(dragHoverTimer)
+      dragHoverTimer = null
+    }
+    destroyTray()
+    clearTaskBadge()
+  })
+}

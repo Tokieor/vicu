@@ -1,0 +1,107 @@
+appId: com.rendyhd.vicu
+productName: Vicu
+copyright: Copyright (c) 2024-2026 rendyhd
+
+directories:
+  buildResources: build
+  output: dist
+
+files:
+  - out/**/*
+  - "!node_modules/**/{test,__tests__,tests,*.test.*,*.spec.*}"
+
+# resources/ and extensions/ ship once, as plain files next to app.asar (read through
+# process.resourcesPath: tray and notification icons, the done sound, the browser bridge, the
+# window-URL script, the browser extension). They are not packed into the asar as well.
+extraResources:
+  - from: resources/
+    to: resources/
+    filter:
+      - "**/*"
+  - from: extensions/
+    to: extensions/
+    filter:
+      - "**/*"
+  # The Silero voice detector of local speech (docs/ai-assistant-v1.md section 3.2), next to the
+  # engine library that scripts/build-speech.mjs puts in resources/speech/ (loaded with koffi from
+  # src/main/ai/speech/native.ts). On macOS electron-builder signs the dylib with the app.
+  - from: native/speech/models/
+    to: speech-models/
+    filter:
+      - "*.bin"
+
+asarUnpack:
+  - "node_modules/koffi/**"
+
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: false
+  license: LICENSE
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+  deleteAppDataOnUninstall: false
+  differentialPackage: false
+
+mac:
+  icon: resources/icon.icns
+  category: public.app-category.productivity
+  darkModeSupport: true
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  notarize: true
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  target:
+    - target: dmg
+      arch:
+        - arm64
+  extendInfo:
+    NSAppleEventsUsageDescription: "Vicu needs automation access to detect the active browser tab for quick task entry."
+    # Voice input (docs/voice-input.md): asked for on the first hold of + or the voice shortcut.
+    NSMicrophoneUsageDescription: "Vicu listens while you hold + or the voice shortcut, to turn what you say into a task."
+    NSSpeechRecognitionUsageDescription: "Vicu turns what you say into a task. Speech is recognized on this Mac when your language allows it."
+
+linux:
+  icon: build/icon.png
+  category: Utility
+  synopsis: Task management app powered by Vikunja
+  description: A personal task manager for your desktop, powered by Vikunja. Frictionless capture, keyboard-driven review, and deep integration with your browser.
+  maintainer: rendyhd
+  syncDesktopName: true
+  target:
+    - target: AppImage
+      arch:
+        - x64
+        - arm64
+  desktop:
+    entry:
+      StartupWMClass: com.rendyhd.vicu
+      Comment: Task management app powered by Vikunja
+      Keywords: task;todo;productivity;vikunja;
+
+# The static AppImage runtime carries its own libfuse3, so the host needs no FUSE 2 (Fedora Atomic
+# ships none). The default toolset, 0.0.0, builds with the old runtime, which does need it.
+toolsets:
+  appimage: "1.0.3"
+
+appImage:
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+
+dmg:
+  sign: false
+  writeUpdateInfo: false
+  artifactName: "${productName}-${version}-${arch}.${ext}"
+
+publish:
+  provider: github
+  releaseType: release
+  publishAutoUpdate: false

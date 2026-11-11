@@ -1,0 +1,593 @@
+import { describe, it, expect } from 'vitest'
+import { blockFields, getParserConfig, parse, extractBangToday } from '../index'
+import { recurrenceToVikunja } from '../recurrence-map'
+import { dateOnlyDue, parsedDue } from '../../due-dates'
+import type { ParserConfig } from '../types'
+
+const todoist: ParserConfig = { enabled: true, syntaxMode: 'todoist' }
+const vikunja: ParserConfig = { enabled: true, syntaxMode: 'vikunja' }
+const disabled: ParserConfig = { enabled: false, syntaxMode: 'todoist' }
+
+// ─── Labels ─────────────────────────────────────────────────
+
+describe('labels', () => {
+  it('extracts single label in Todoist mode', () => {
+    const r = parse('buy groceries @shopping', todoist)
+    expect(r.labels).toEqual(['shopping'])
+    expect(r.title).toBe('buy groceries')
+  })
+
+  it('extracts multiple labels in Todoist mode', () => {
+    const r = parse('task @work @urgent', todoist)
+    expect(r.labels).toEqual(['work', 'urgent'])
+    expect(r.title).toBe('task')
+  })
+
+  it('extracts labels with Vikunja prefix *', () => {
+    const r = parse('task *work *urgent', vikunja)
+    expect(r.labels).toEqual(['work', 'urgent'])
+    expect(r.title).toBe('task')
+  })
+
+  it('ignores @ in Vikunja mode', () => {
+    const r = parse('email @john', vikunja)
+    expect(r.labels).toEqual([])
+    expect(r.title).toBe('email @john')
+  })
+
+  it('handles quoted labels', () => {
+    const r = parse('task @"multi word"', todoist)
+    expect(r.labels).toEqual(['multi word'])
+    expect(r.title).toBe('task')
+  })
+
+  it('ignores dangling @', () => {
+    const r = parse('dangling @', todoist)
+    expect(r.labels).toEqual([])
+    expect(r.title).toBe('dangling @')
+  })
+
+  it('handles label with hyphens', () => {
+    const r = parse('task @follow-up', todoist)
+    expect(r.labels).toEqual(['follow-up'])
+    expect(r.title).toBe('task')
+  })
+})
+
+// ─── Projects ───────────────────────────────────────────────
+
+describe('projects', () => {
+  it('extracts project in Todoist mode', () => {
+    const r = parse('buy groceries #shopping', todoist)
+    expect(r.project).toBe('shopping')
+    expect(r.title).toBe('buy groceries')
+  })
+
+  it('ignores # followed by number (issue reference)', () => {
+    const r = parse('review PR #142', todoist)
+    expect(r.project).toBeNull()
+    expect(r.title).toBe('review PR #142')
+  })
+
+  it('extracts project with Vikunja prefix +', () => {
+    const r = parse('task +work', vikunja)
+    expect(r.project).toBe('work')
+    expect(r.title).toBe('task')
+  })
+
+  it('handles quoted project', () => {
+    const r = parse('task #"my project"', todoist)
+    expect(r.project).toBe('my project')
+    expect(r.title).toBe('task')
+  })
+
+  it('takes only first project', () => {
+    const r = parse('task #work #personal', todoist)
+    expect(r.project).toBe('work')
+    // Second # stays in title
+    expect(r.title).toBe('task #personal')
+  })
+})
+
+// ─── Priority ───────────────────────────────────────────────
+
+describe('priority', () => {
+  it('extracts Todoist p1 as Vikunja 4 (urgent)', () => {
+    const r = parse('urgent task p1', todoist)
+    expect(r.priority).toBe(4)
+    expect(r.title).toBe('urgent task')
+  })
+
+  it('extracts Todoist p3 as Vikunja 2 (medium)', () => {
+    const r = parse('task p3', todoist)
+    expect(r.priority).toBe(2)
+    expect(r.title).toBe('task')
+  })
+
+  it('does not match p2p (word boundary)', () => {
+    const r = parse('p3 talk about p2p', todoist)
+    expect(r.priority).toBe(2)
+    expect(r.title).toBe('talk about p2p')
+  })
+
+  it('extracts Vikunja !3 as priority 3', () => {
+    const r = parse('task !3', vikunja)
+    expect(r.priority).toBe(3)
+    expect(r.title).toBe('task')
+  })
+
+  it('does not treat !4 as priority in Todoist mode', () => {
+    const r = parse('task !4', todoist)
+    expect(r.priority).toBeNull()
+    // !4 stays in title (it's not a Todoist pattern, nor a word priority)
+    expect(r.title).toBe('task !4')
+  })
+
+  it('extracts !urgent word priority in both modes', () => {
+    const r = parse('task !urgent', todoist)
+    expect(r.priority).toBe(4)
+    expect(r.title).toBe('task')
+  })
+
+  it('extracts !low word priority', () => {
+    const r = parse('task !low', vikunja)
+    expect(r.priority).toBe(1)
+    expect(r.title).toBe('task')
+  })
+})
+
+// ─── Recurrence ─────────────────────────────────────────────
+
+describe('recurrence', () => {
+  it('extracts "every 2 weeks"', () => {
+    const r = parse('standup every 2 weeks', todoist)
+    expect(r.recurrence).toEqual({ interval: 2, unit: 'week' })
+    expect(r.title).toBe('standup')
+  })
+
+  it('extracts "every day"', () => {
+    const r = parse('journal every day', todoist)
+    expect(r.recurrence).toEqual({ interval: 1, unit: 'day' })
+    expect(r.title).toBe('journal')
+  })
+
+  it('does NOT extract "weekly" from "weekly standup"', () => {
+    const r = parse('weekly standup', todoist)
+    expect(r.recurrence).toBeNull()
+    expect(r.title).toBe('weekly standup')
+  })
+
+  it('extracts standalone "daily" when it is the only text', () => {
+    const r = parse('daily', todoist)
+    expect(r.recurrence).toEqual({ interval: 1, unit: 'day' })
+    expect(r.title).toBe('')
+  })
+
+  it('extracts "monthly" as standalone with other tokens consumed', () => {
+    const r = parse('monthly @work', todoist)
+    expect(r.recurrence).toEqual({ interval: 1, unit: 'month' })
+    expect(r.labels).toEqual(['work'])
+    expect(r.title).toBe('')
+  })
+})
+
+// ─── Dates ──────────────────────────────────────────────────
+
+describe('dates', () => {
+  it('extracts "tomorrow" as a date', () => {
+    const r = parse('buy groceries tomorrow', todoist)
+    expect(r.dueDate).toBeInstanceOf(Date)
+    const tomorrow = new Date()
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    expect(r.dueDate!.getDate()).toBe(tomorrow.getDate())
+    expect(r.title).toBe('buy groceries')
+  })
+
+  it('extracts "tomorrow 3pm"', () => {
+    const r = parse('buy groceries tomorrow 3pm', todoist)
+    expect(r.dueDate).toBeInstanceOf(Date)
+    expect(r.dueDate!.getHours()).toBe(15)
+    expect(r.title).toBe('buy groceries')
+  })
+
+  it('does not extract date from consumed regions', () => {
+    // "monday" in a label shouldn't be parsed as a date
+    const r = parse('task @monday', todoist)
+    expect(r.labels).toEqual(['monday'])
+    // The date extractor sees spaces where @monday was, so no date
+    expect(r.dueDate).toBeNull()
+    expect(r.title).toBe('task')
+  })
+
+  it('does not parse standalone "now" as a date', () => {
+    const r = parse('call john now', todoist)
+    expect(r.dueDate).toBeNull()
+    expect(r.title).toBe('call john now')
+  })
+
+  it('still extracts a later date when "now" appears earlier', () => {
+    const r = parse('do this now and tomorrow', todoist)
+    expect(r.dueDate).toBeInstanceOf(Date)
+    const tomorrow = new Date()
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    expect(r.dueDate!.getDate()).toBe(tomorrow.getDate())
+    expect(r.title).toBe('do this now and')
+  })
+})
+
+// ─── A month-name date that is today, with a time that has passed (F6) ────────────────────
+
+describe('a date that falls on today with a time that has already passed', () => {
+  // Wednesday 7 October 2026, 10:30 local time. chrono's forwardDate pushes "oct 7 at 9am" to next
+  // year because 09:00 is behind the clock; the day and the month are certain, so today stays.
+  const now = new Date(2026, 9, 7, 10, 30, 0, 0)
+  const local = (d: Date | null) =>
+    d && [d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getHours(), d.getMinutes()].join('-')
+
+  it.each([
+    ['x oct 7 at 9am'],
+    ['x oct 7 9am'],
+    ['x 7 oct at 9am'],
+    ['x october 7th at 9am'],
+    ['x on oct 7 at 9:00'],
+    ['x 7 October 09:00'],
+  ])('keeps today for %j', (input) => {
+    const r = parse(input, todoist, now)
+    expect(local(r.dueDate)).toBe('2026-10-7-9-0')
+    expect(r.dueHasTime).toBe(true)
+    expect(r.title).toBe('x')
+  })
+
+  it('keeps the time of a slash date written month first', () => {
+    expect(local(parse('x 10/7 at 9am', { ...todoist, locale: 'en-US' }, now).dueDate)).toBe('2026-10-7-9-0')
+  })
+
+  it('does not change a time that is still ahead today', () => {
+    expect(local(parse('x oct 7 at 11am', todoist, now).dueDate)).toBe('2026-10-7-11-0')
+  })
+
+  it('does not change a date-only phrase', () => {
+    const r = parse('x oct 7', todoist, now)
+    expect(local(r.dueDate)?.startsWith('2026-10-7-')).toBe(true)
+    expect(r.dueHasTime).toBe(false)
+  })
+
+  it('still rolls an earlier day to next year: only today is kept', () => {
+    expect(local(parse('x oct 6 at 9am', todoist, now).dueDate)).toBe('2027-10-6-9-0')
+  })
+
+  it('does not touch later days, or other months', () => {
+    expect(local(parse('x oct 8 at 9am', todoist, now).dueDate)).toBe('2026-10-8-9-0')
+    expect(local(parse('x sep 7 at 9am', todoist, now).dueDate)).toBe('2027-9-7-9-0')
+    expect(local(parse('x nov 7 at 9am', todoist, now).dueDate)).toBe('2026-11-7-9-0')
+  })
+
+  it('keeps a year that was typed, even when it is behind us', () => {
+    expect(local(parse('x oct 7 2026 at 9am', todoist, now).dueDate)).toBe('2026-10-7-9-0')
+    expect(local(parse('x oct 7 2025 at 9am', todoist, now).dueDate)).toBe('2025-10-7-9-0')
+    expect(local(parse('x oct 7 2027 at 9am', todoist, now).dueDate)).toBe('2027-10-7-9-0')
+  })
+
+  it('works on the first day of the year, where "next year" is easy to get wrong', () => {
+    const newYear = new Date(2026, 0, 1, 10, 30, 0, 0)
+    expect(local(parse('x jan 1 at 9am', todoist, newYear).dueDate)).toBe('2026-1-1-9-0')
+    expect(local(parse('x dec 31 at 9am', todoist, newYear).dueDate)).toBe('2026-12-31-9-0')
+  })
+
+  it('leaves relative phrases alone: "today at 9am" and "tomorrow at 9am" mean what they say', () => {
+    expect(local(parse('x today at 9am', todoist, now).dueDate)).toBe('2026-10-7-9-0')
+    expect(local(parse('x tomorrow at 9am', todoist, now).dueDate)).toBe('2026-10-8-9-0')
+  })
+})
+
+// ─── Bang Today (!→ today) ──────────────────────────────────
+
+describe('extractBangToday', () => {
+  it('converts trailing ! to today', () => {
+    const r = extractBangToday('call dentist !')
+    expect(r.dueDate).toBeInstanceOf(Date)
+    expect(r.dueDate!.getHours()).toBe(0)
+    expect(r.title).toBe('call dentist')
+  })
+
+  it('converts trailing ! without space to today', () => {
+    const r = extractBangToday('call dentist!')
+    expect(r.dueDate).toBeInstanceOf(Date)
+    expect(r.title).toBe('call dentist')
+  })
+
+  it('returns null for no trailing !', () => {
+    const r = extractBangToday('call dentist')
+    expect(r.dueDate).toBeNull()
+    expect(r.title).toBe('call dentist')
+  })
+
+  it('does not treat !word as bang-today', () => {
+    const r = extractBangToday('task !urgent')
+    expect(r.dueDate).toBeNull()
+    expect(r.title).toBe('task !urgent')
+  })
+})
+
+// ─── Disabled Parser ────────────────────────────────────────
+
+describe('disabled parser', () => {
+  it('returns raw input as title when disabled', () => {
+    const r = parse('buy groceries tomorrow @shopping p1', disabled)
+    expect(r.title).toBe('buy groceries tomorrow @shopping p1')
+    expect(r.dueDate).toBeNull()
+    expect(r.priority).toBeNull()
+    expect(r.labels).toEqual([])
+    expect(r.project).toBeNull()
+    expect(r.recurrence).toBeNull()
+    expect(r.tokens).toEqual([])
+  })
+})
+
+// ─── Suppress Types ─────────────────────────────────────────
+
+describe('suppressTypes', () => {
+  it('suppresses date extraction when specified', () => {
+    const cfg: ParserConfig = { enabled: true, syntaxMode: 'todoist', suppressTypes: ['date'] }
+    const r = parse('task tomorrow @work p1', cfg)
+    expect(r.dueDate).toBeNull()
+    expect(r.labels).toEqual(['work'])
+    expect(r.priority).toBe(4)
+    expect(r.title).toBe('task tomorrow')
+  })
+
+  it('suppresses labels when specified', () => {
+    const cfg: ParserConfig = { enabled: true, syntaxMode: 'todoist', suppressTypes: ['label'] }
+    const r = parse('task @work p1', cfg)
+    expect(r.labels).toEqual([])
+    expect(r.priority).toBe(4)
+    expect(r.title).toBe('task @work')
+  })
+})
+
+// ─── Combined Parsing ───────────────────────────────────────
+
+describe('combined parsing', () => {
+  it('parses full Todoist-style input', () => {
+    const r = parse('buy groceries tomorrow 3pm #shopping @errands p3', todoist)
+    expect(r.project).toBe('shopping')
+    expect(r.labels).toEqual(['errands'])
+    expect(r.priority).toBe(2) // p3 → Vikunja 2
+    expect(r.dueDate).toBeInstanceOf(Date)
+    expect(r.title).toBe('buy groceries')
+  })
+
+  it('parses full Vikunja-style input', () => {
+    const r = parse('buy groceries tomorrow +shopping *errands !3', vikunja)
+    expect(r.project).toBe('shopping')
+    expect(r.labels).toEqual(['errands'])
+    expect(r.priority).toBe(3)
+    expect(r.dueDate).toBeInstanceOf(Date)
+    expect(r.title).toBe('buy groceries')
+  })
+
+  it('handles empty input', () => {
+    const r = parse('', todoist)
+    expect(r.title).toBe('')
+    expect(r.tokens).toEqual([])
+  })
+
+  it('handles whitespace-only input', () => {
+    const r = parse('   ', todoist)
+    expect(r.title).toBe('   ')
+    expect(r.tokens).toEqual([])
+  })
+})
+
+// ─── Edge Cases from Spec ───────────────────────────────────
+
+describe('edge cases', () => {
+  it('task !4 in Vikunja = priority 4, NOT today shortcut', () => {
+    const r = parse('task !4', vikunja)
+    expect(r.priority).toBe(4)
+    expect(r.title).toBe('task')
+  })
+
+  it('task !4 in Todoist = !4 stays in title', () => {
+    const r = parse('task !4', todoist)
+    expect(r.priority).toBeNull()
+    expect(r.title).toBe('task !4')
+  })
+
+  it('review PR #142 = no project, #142 stays in title', () => {
+    const r = parse('review PR #142', todoist)
+    expect(r.project).toBeNull()
+    expect(r.title).toBe('review PR #142')
+  })
+
+  it('p3 talk about p2p = priority 3, p2p in title', () => {
+    const r = parse('p3 talk about p2p', todoist)
+    expect(r.priority).toBe(2) // p3 → Vikunja 2
+    expect(r.title).toBe('talk about p2p')
+  })
+
+  it('weekly standup = no recurrence', () => {
+    const r = parse('weekly standup', todoist)
+    expect(r.recurrence).toBeNull()
+    expect(r.title).toBe('weekly standup')
+  })
+
+  it('email @john in Vikunja = no labels, @john in title', () => {
+    const r = parse('email @john', vikunja)
+    expect(r.labels).toEqual([])
+    expect(r.title).toBe('email @john')
+  })
+
+  it('dangling @ in Todoist = no labels, @ in title', () => {
+    const r = parse('dangling @', todoist)
+    expect(r.labels).toEqual([])
+    expect(r.title).toBe('dangling @')
+  })
+})
+
+// ─── Recurrence Map ─────────────────────────────────────────
+
+describe('recurrenceToVikunja', () => {
+  it('daily → 86400s, mode 0', () => {
+    expect(recurrenceToVikunja({ interval: 1, unit: 'day' })).toEqual({
+      repeat_after: 86400,
+      repeat_mode: 0,
+    })
+  })
+
+  it('weekly → 604800s, mode 0', () => {
+    expect(recurrenceToVikunja({ interval: 1, unit: 'week' })).toEqual({
+      repeat_after: 604800,
+      repeat_mode: 0,
+    })
+  })
+
+  it('monthly → 0, mode 1', () => {
+    expect(recurrenceToVikunja({ interval: 1, unit: 'month' })).toEqual({
+      repeat_after: 0,
+      repeat_mode: 1,
+    })
+  })
+
+  it('yearly → 365 * 86400, mode 0', () => {
+    expect(recurrenceToVikunja({ interval: 1, unit: 'year' })).toEqual({
+      repeat_after: 365 * 86400,
+      repeat_mode: 0,
+    })
+  })
+
+  it('every 2 weeks → 2 * 604800, mode 0', () => {
+    expect(recurrenceToVikunja({ interval: 2, unit: 'week' })).toEqual({
+      repeat_after: 2 * 604800,
+      repeat_mode: 0,
+    })
+  })
+})
+
+// ─── Explicit times (cross-app semantics v1, section 1.1) ───
+
+describe('explicit times', () => {
+  it('flags a date with a time of day', () => {
+    expect(parse('buy groceries tomorrow 3pm', todoist).dueHasTime).toBe(true)
+    expect(parse('call mom at 14:30', todoist).dueHasTime).toBe(true)
+    expect(parse('stand-up in 2 hours', todoist).dueHasTime).toBe(true)
+  })
+
+  it('does not flag a date-only phrase', () => {
+    expect(parse('buy groceries tomorrow', todoist).dueHasTime).toBe(false)
+    expect(parse('renew passport jan 15', todoist).dueHasTime).toBe(false)
+    expect(parse('plan trip in 3 days', todoist).dueHasTime).toBe(false)
+  })
+
+  it('is false when no date was found', () => {
+    expect(parse('buy groceries', todoist).dueHasTime).toBe(false)
+    expect(parse('buy groceries tomorrow', disabled).dueHasTime).toBe(false)
+  })
+
+  it('treats the bang shortcut as date-only', () => {
+    const r = parse('call dentist !', { ...todoist, bangToday: true })
+    expect(r.dueDate).toBeInstanceOf(Date)
+    expect(r.dueHasTime).toBe(false)
+  })
+
+  it('stores a parsed time as typed and a bare date at 23:59:59', () => {
+    const timed = parse('buy groceries tomorrow 3pm', todoist)
+    const tomorrow = new Date()
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    const due = new Date(parsedDue(timed.dueDate!, timed.dueHasTime))
+    expect(due.getDate()).toBe(tomorrow.getDate())
+    expect([due.getHours(), due.getMinutes(), due.getSeconds()]).toEqual([15, 0, 0])
+
+    const bare = parse('buy groceries tomorrow', todoist)
+    const bareDue = new Date(parsedDue(bare.dueDate!, bare.dueHasTime))
+    expect(bareDue.getDate()).toBe(tomorrow.getDate())
+    expect([bareDue.getHours(), bareDue.getMinutes(), bareDue.getSeconds()]).toEqual([23, 59, 59])
+  })
+
+  it('does not change the parse result when building the due date', () => {
+    const r = parse('buy groceries tomorrow', todoist)
+    const before = r.dueDate!.getTime()
+    parsedDue(r.dueDate!, r.dueHasTime)
+    expect(r.dueDate!.getTime()).toBe(before)
+    expect(parsedDue(r.dueDate!, false)).toBe(dateOnlyDue(`${r.dueDate!.getFullYear()}-${String(r.dueDate!.getMonth() + 1).padStart(2, '0')}-${String(r.dueDate!.getDate()).padStart(2, '0')}`))
+  })
+})
+
+// ─── for: a length (contract section 5.4; the corpus has the forms both apps share) ──────────────
+
+describe('for', () => {
+  const now = new Date(2026, 9, 6, 10, 0, 0)
+  const at = (text: string, config: ParserConfig = todoist) => parse(text, config, now)
+
+  it('is not a date in the forms chrono reads as that long from now', () => {
+    for (const text of ['Run for an hour', 'Holiday for two weeks', 'Stretch for 2d', 'Wait for 5s', 'Hold for half an hour', 'Rest for two weeks and three days']) {
+      const r = at(text)
+      expect(r.dueDate, text).toBeNull()
+      expect(r.title, text).toBe(text)
+    }
+  })
+
+  it('those forms are plain words: they keep two date phrases apart', () => {
+    const r = at('Call tomorrow for an hour at 9am')
+    expect(r.title).toBe('Call for an hour at 9am')
+    expect(r.dueHasTime).toBe(false)
+    expect(r.dueDate!.getDate()).toBe(7)
+    expect(r.block).toBeNull()
+  })
+
+  it('a length inside a date phrase leaves tokens that do not overlap', () => {
+    const r = at('Call tomorrow for 1h at 9am')
+    expect(r.tokens.map((t) => [t.type, t.raw])).toEqual([
+      ['date', 'tomorrow'],
+      ['date', 'at 9am'],
+      ['length', 'for 1h'],
+    ])
+    const sorted = [...r.tokens].sort((a, b) => a.start - b.start)
+    sorted.forEach((token, i) => {
+      if (i > 0) expect(token.start).toBeGreaterThanOrEqual(sorted[i - 1].end)
+    })
+  })
+
+  it('a phrase that is not a block stays in the title, also inside a date phrase', () => {
+    const r = at('Call tomorrow for 13h at 9am')
+    expect(r.title).toBe('Call for 13h')
+    expect(r.block).toBeNull()
+    expect(r.dueHasTime).toBe(true)
+    expect(r.dueDate).toEqual(new Date(2026, 9, 7, 9, 0))
+  })
+
+  it('dismissing the length keeps the time as the due time and the words in the title', () => {
+    const r = at('Call at 3pm for 30m', { ...todoist, suppressTypes: ['length'] })
+    expect(r.title).toBe('Call for 30m')
+    expect(r.block).toBeNull()
+    expect(r.dueHasTime).toBe(true)
+    expect(r.dueDate).toEqual(new Date(2026, 9, 6, 15, 0))
+  })
+
+  it('dismissing the date leaves all the words', () => {
+    const r = at('Call at 3pm for 30m', { ...todoist, suppressTypes: ['date'] })
+    expect(r.title).toBe('Call at 3pm for 30m')
+    expect(r.dueDate).toBeNull()
+    expect(r.block).toBeNull()
+  })
+
+  it('gives the task fields of a block, and none without one', () => {
+    expect(blockFields(at('Call at 3pm for 30m'))).toEqual({
+      start_date: new Date(2026, 9, 6, 15, 0).toISOString(),
+      end_date: new Date(2026, 9, 6, 15, 30).toISOString(),
+    })
+    expect(blockFields(at('Call at 3pm'))).toBeNull()
+    expect(blockFields(null)).toBeNull()
+  })
+
+  it('"the day after tomorrow" is a day, not the amount "the day" (desktop only: Android reads tomorrow)', () => {
+    const r = at('Call the day after tomorrow')
+    expect(r.title).toBe('Call')
+    expect(r.dueDate!.getDate()).toBe(8)
+  })
+
+  it('is off in standalone mode, where a task only keeps a due date', () => {
+    expect(getParserConfig({ standalone_mode: true }).suppressTypes).toEqual(['length'])
+    expect(getParserConfig({}).suppressTypes).toBeUndefined()
+  })
+})

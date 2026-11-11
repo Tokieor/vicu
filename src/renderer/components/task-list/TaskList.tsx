@@ -1,0 +1,656 @@
+import { useState, useRef, useEffect, useCallback, Fragment } from 'react'
+import { Plus, Inbox } from 'lucide-react'
+import { SortableContext } from '@dnd-kit/sortable'
+import { useQueryClient } from '@tanstack/react-query'
+import { cn } from '@/lib/cn'
+import { DEFAULT_TASK_ORDER, canReorderTask, type TaskOrderKey } from '../../../shared/task-order'
+import { verticalListSortingStrategyForeignSafe } from '@/lib/sortable-strategy'
+import { useCompleteTask, useUpdateTask, useDeleteTask } from '@/hooks/use-task-mutations'
+import { useDuplicateTasks } from '@/hooks/use-duplicate-tasks'
+import { usePasteTasks } from '@/hooks/use-paste-tasks'
+import { useTaskStep } from '@/hooks/use-task-step'
+import { currentExpandedTaskId, useSelectionStore } from '@/stores/selection-store'
+import { useNewTaskRequestStore } from '@/stores/new-task-request-store'
+import { orderedTaskIds, resolveSelectedTasks, copySelectedTitles, isTaskNestedInCurrentList } from '@/lib/task-selection'
+import { confirmDelete } from '@/lib/confirm-bridge'
+import { api } from '@/lib/api'
+import { dueToday } from '@/lib/due-dates'
+import type { Task } from '@/lib/vikunja-types'
+import { TaskRow } from './TaskRow'
+import { TaskRowGroup } from './TaskRowGroup'
+import { AddTaskButton } from './AddTaskButton'
+import { EmptyState } from '@/components/shared/EmptyState'
+import { PageHeader } from '@/components/shared/PageHeader'
+import { Button } from '@/components/shared/Button'
+import { NewTaskComposer } from './NewTaskComposer'
+import { SelectionBar } from './SelectionBar'
+import { taskDescendants, unfinishedDescendants } from '@/lib/task-hierarchy'
+import { confirmTaskCompletion } from '@/lib/task-completion'
+import { SmartListIcon } from '@/components/shared/SmartListIcon'
+import { ReadingScroll } from '@/components/layout/ReadingScroll'
+import { useHoldToTalk } from '@/hooks/use-hold-to-talk'
+import { useVoiceListStore } from '@/stores/voice-list-store'
+import type { SmartListId } from '@/lib/smart-list-identity'
+
+interface TaskListProps {
+  title: string
+  /** A smart list: its identity icon shows before the title. */
+  identity?: SmartListId
+  /** One line under the title (Today's full date). */
+  subtitle?: React.ReactNode
+  tasks: Task[]
+  projectId?: number
+  emptyTitle?: string
+  emptySubtitle?: string
+  /** The list has just been emptied: the empty state warms in (Today's All clear). */
+  emptyWarm?: boolean
+  /** Under the empty state's title (the next upcoming task). */
+  emptyExtra?: React.ReactNode
+  showNewTask?: boolean
+  /** The list is a project's (or the Inbox's) and rows may be dragged into a new place there. */
+  sortable?: boolean
+  /**
+   * The list's task order (cross-app semantics 12.4): every row can be dragged in Manual, only the
+   * undated ones in "Due date, then manual", none in the other orders. Default: the default order.
+   */
+  taskOrder?: TaskOrderKey
+  viewId?: number
+  className?: string
+  children?: React.ReactNode
+  /** Overrides the guess that the list is empty (no tasks and no children); a view that fills the list through children says so. */
+  empty?: boolean
+  insertIndex?: number
+  /** When set, new tasks get this due date by default. Shown as a dismissible chip. */
+  defaultDueDate?: Date
+  /** Content rendered inside the scroll area above the task input (e.g. date subtitle) */
+  headerContent?: React.ReactNode
+  /** Buttons at the right of the title, before New task (a project's … menu). */
+  headerActions?: React.ReactNode
+  onTaskCreated?: (task: Task) => void
+  /**
+   * Where the quiet "New task" row (and the composer it turns into) sits: after the list's own
+   * tasks and before `children` (a project, whose sections follow), or after the children, the end
+   * of the whole list (Today, Upcoming, Anytime: the tasks are all in the children). Default: the end.
+   */
+  newTaskPlacement?: 'after-tasks' | 'after-children'
+  /** The list sits in a panel with its own heading: no page header. */
+  hideHeader?: boolean
+}
+
+export function TaskList({
+  title,
+  identity,
+  subtitle,
+  tasks,
+  projectId,
+  emptyTitle = 'No tasks',
+  emptySubtitle,
+  emptyWarm,
+  emptyExtra,
+  showNewTask = true,
+  sortable = false,
+  taskOrder = DEFAULT_TASK_ORDER,
+  viewId,
+  className,
+  children,
+  empty,
+  insertIndex,
+  defaultDueDate,
+  headerContent,
+  headerActions,
+  onTaskCreated,
+  newTaskPlacement = 'after-children',
+  hideHeader = false,
+}: TaskListProps) {
+  const [isAdding, setIsAdding] = useState(false)
+  // Holding the header + says a task instead of typing it (docs/voice-input.md). A voice task gets
+  // the defaults this list gives its composer, from wherever the capture is started.
+  const holdToTalk = useHoldToTalk()
+  const defaultDueTime = defaultDueDate?.getTime()
+  useEffect(() => {
+    if (!showNewTask || !projectId) return
+    const owner = {}
+    useVoiceListStore.getState().register(owner, {
+      projectId,
+      defaultDueDate: defaultDueTime === undefined ? null : new Date(defaultDueTime),
+    })
+    return () => useVoiceListStore.getState().unregister(owner)
+  }, [showNewTask, projectId, defaultDueTime])
+  const [addPosition, setAddPosition] = useState<'top' | 'bottom'>('top')
+  const inputRef = useRef<HTMLInputElement>(null)
+  const creationRef = useRef<HTMLDivElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
+  const pendingTaskClickRef = useRef<number | null>(null)
+  const pasteTasks = usePasteTasks({ projectId, defaultDueDate })
+  const completeTask = useCompleteTask()
+  const duplicate = useDuplicateTasks()
+  const updateTask = useUpdateTask()
+  const deleteTask = useDeleteTask()
+  const stepTask = useTaskStep()
+  const qc = useQueryClient()
+  // Narrow selectors: focusedTaskId drives the scroll-into-view effect, so it
+  // stays a subscription; expandedTaskId/selectedTaskIds are only read inside
+  // the keyboard handler and are fetched there via getState().
+  const focusedTaskId = useSelectionStore((s) => s.focusedTaskId)
+  const setFocusedTask = useSelectionStore((s) => s.setFocusedTask)
+  const setExpandedTask = useSelectionStore((s) => s.setExpandedTask)
+  const collapseAll = useSelectionStore((s) => s.collapseAll)
+  const setSelectedRange = useSelectionStore((s) => s.setSelectedRange)
+  const clearSelection = useSelectionStore((s) => s.clearSelection)
+
+  useEffect(() => {
+    if (isAdding && inputRef.current) {
+      inputRef.current.focus()
+    }
+  }, [isAdding])
+
+  // While the new-task UI is open, record which task row the user mousedowns on.
+  // Mousedown fires before the input's blur, which is the only signal we have
+  // before the layout shifts from removing the input — by the time the click
+  // event fires, the cursor is no longer over the intended row.
+  useEffect(() => {
+    if (!isAdding) {
+      pendingTaskClickRef.current = null
+      return
+    }
+    const handleMouseDown = (e: MouseEvent) => {
+      const target = e.target
+      if (!(target instanceof Node)) return
+      if (creationRef.current?.contains(target)) {
+        pendingTaskClickRef.current = null
+        return
+      }
+      const el = target instanceof HTMLElement ? target : null
+      const taskEl = el?.closest('[data-task-id]') as HTMLElement | null
+      if (!taskEl) {
+        pendingTaskClickRef.current = null
+        return
+      }
+      const id = Number(taskEl.getAttribute('data-task-id'))
+      pendingTaskClickRef.current = Number.isNaN(id) ? null : id
+    }
+    document.addEventListener('mousedown', handleMouseDown)
+    return () => document.removeEventListener('mousedown', handleMouseDown)
+  }, [isAdding])
+
+  // Click on whitespace (title area or empty space) collapses expanded task
+  const handleContainerClick = useCallback(
+    (e: React.MouseEvent) => {
+      const target = e.target as HTMLElement
+      // Only collapse if the click is directly on the container (whitespace)
+      if (target === e.currentTarget) {
+        collapseAll()
+        setFocusedTask(null)
+        clearSelection()
+      }
+    },
+    [collapseAll, setFocusedTask, clearSelection]
+  )
+
+  // The empty state has its own "Add task" button, so the list shows no second one under it.
+  const isEmpty = empty ?? (tasks.length === 0 && !children)
+
+  // The header's + button and the empty state's "Add task" open the composer at the top.
+  const startAdding = useCallback(() => {
+    setAddPosition('top')
+    setIsAdding(true)
+  }, [])
+
+  const handleHeaderClick = useCallback(
+    (e: React.MouseEvent) => {
+      const target = e.target as HTMLElement
+      // Collapse if clicking the header area but not buttons
+      if (target.closest('button')) return
+      collapseAll()
+      setFocusedTask(null)
+      clearSelection()
+    },
+    [collapseAll, setFocusedTask, clearSelection]
+  )
+
+  const handleScrollAreaClick = useCallback(
+    (e: React.MouseEvent) => {
+      const target = e.target as HTMLElement
+      // Only collapse when clicking empty space: the scroll container itself (beside the column) or
+      // the reading column inside it (below the tasks).
+      if (target === e.currentTarget || target.parentElement === e.currentTarget) {
+        collapseAll()
+        setFocusedTask(null)
+        clearSelection()
+      }
+    },
+    [collapseAll, setFocusedTask, clearSelection]
+  )
+
+  // Keyboard navigation
+  const handleKeyDown = useCallback(
+    (e: KeyboardEvent) => {
+      // Don't handle if focus is in an input/textarea/contentEditable (let the field handle it)
+      const active = document.activeElement as HTMLElement | null
+      const tag = active?.tagName.toLowerCase()
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return
+      if (active?.isContentEditable) return
+
+      // Handler wants current-at-keypress values — read imperatively instead
+      // of subscribing the whole list to selection/expansion changes.
+      const { selectedTaskIds } = useSelectionStore.getState()
+      const expandedTaskId = currentExpandedTaskId()
+
+      // --- Multi-selection shortcuts (work even when this list's own `tasks`
+      // prop is empty, e.g. a project whose tasks all live in sections) ---
+
+      // Ctrl+A / ⌘A: select all visible rows (DOM order spans parent + sections)
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+        e.preventDefault()
+        setSelectedRange(orderedTaskIds())
+        setExpandedTask(null)
+        return
+      }
+
+      // Ctrl+C / ⌘C: copy selected titles, one per line. Only hijack when there
+      // IS a selection; otherwise let native copy run.
+      if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+        if (selectedTaskIds.size > 0) {
+          e.preventDefault()
+          void copySelectedTitles(qc, selectedTaskIds)
+        }
+        return
+      }
+
+      // Ctrl+D / ⌘D: duplicate the selected tasks (cross-app semantics 15).
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'd' && selectedTaskIds.size > 0) {
+        e.preventDefault()
+        void duplicate(resolveSelectedTasks(qc, selectedTaskIds))
+        clearSelection()
+        return
+      }
+
+      // Escape clears an active multi-selection first.
+      if (e.key === 'Escape' && selectedTaskIds.size > 0) {
+        e.preventDefault()
+        clearSelection()
+        return
+      }
+
+      // Ctrl+K / ⌘K with a multi-selection: complete every selected task.
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k' && selectedTaskIds.size > 0) {
+        e.preventDefault()
+        const targets = resolveSelectedTasks(qc, selectedTaskIds).filter((task) => !task.done)
+        const descendantCount = new Set(
+          targets.flatMap((task) => unfinishedDescendants(task).map((child) => child.id)),
+        ).size
+        void (async () => {
+          if (descendantCount > 0) {
+            const ok = await confirmDelete(
+              `Complete ${targets.length} ${targets.length === 1 ? 'task' : 'tasks'} and ${descendantCount} unfinished ${descendantCount === 1 ? 'subtask' : 'subtasks'}?`,
+              { force: true, confirmLabel: 'Complete all', destructive: false },
+            )
+            if (!ok) return
+          }
+          targets.forEach((task) => completeTask.mutate(
+            isTaskNestedInCurrentList(task)
+              ? { task, suppressTopLevelUndo: true }
+              : task,
+          ))
+          clearSelection()
+        })()
+        return
+      }
+
+      // Delete / Backspace with a multi-selection: delete all (single confirm).
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedTaskIds.size > 0) {
+        e.preventDefault()
+        const targets = resolveSelectedTasks(qc, selectedTaskIds)
+        if (targets.length === 0) return
+        if (targets.some((task) => taskDescendants(task).length > 0)) {
+          void confirmDelete(
+            'This selection includes a parent task. Open that parent to choose whether its subtasks should be deleted or kept.',
+            { force: true, confirmLabel: 'Close', destructive: false },
+          )
+          return
+        }
+        const message =
+          targets.length > 1
+            ? `Delete ${targets.length} tasks? This cannot be undone.`
+            : 'Delete this task? This cannot be undone.'
+        void confirmDelete(message).then((ok) => {
+          if (!ok) return
+          targets.forEach((t) => deleteTask.mutate({ task: t }))
+          clearSelection()
+        })
+        return
+      }
+
+      // Ctrl+N / ⌘N: New task
+      if ((e.ctrlKey || e.metaKey) && e.key === 'n') {
+        e.preventDefault()
+        if (showNewTask && projectId) {
+          setAddPosition('top')
+          setIsAdding(true)
+        }
+        return
+      }
+
+      // Ctrl+V / ⌘V: new tasks from the clipboard, one per line, each parsed like typed input.
+      // Several lines are confirmed first (see usePasteTasks).
+      if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+        e.preventDefault()
+        void pasteTasks()
+        return
+      }
+
+      // The rows on screen in reading order. A view may hand its rows over as children (Today,
+      // Upcoming, Anytime, a project's sections), so the `tasks` prop is not the whole list.
+      const visibleIds = orderedTaskIds()
+      const taskCount = visibleIds.length
+      if (taskCount === 0) return
+
+      const currentIndex = focusedTaskId ? visibleIds.indexOf(focusedTaskId) : -1
+
+      // Arrows belong to the list only while focus is on the page itself or in the list, and not in
+      // a menu, dialog or listbox (those use the arrows for their own items).
+      const arrowsForList =
+        !active ||
+        active === document.body ||
+        (!!listRef.current?.contains(active) && !active.closest('[role="menu"], [role="dialog"], [role="listbox"]'))
+
+      // Alt+Shift+Up/Down: move the focused row one place (Move up, Move down), where the list's order
+      // allows it (cross-app semantics 12.4). Lists that keep their own order (Today ...) do nothing.
+      if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey && arrowsForList) {
+        e.preventDefault()
+        if (sortable && focusedTaskId && !expandedTaskId && selectedTaskIds.size <= 1) {
+          stepTask(focusedTaskId, e.key === 'ArrowUp' ? 'up' : 'down')
+        }
+        return
+      }
+
+      // Arrow Up
+      if (e.key === 'ArrowUp' && arrowsForList) {
+        e.preventDefault()
+        if (expandedTaskId) return // don't navigate while editing
+        const newIndex = currentIndex <= 0 ? 0 : currentIndex - 1
+        setFocusedTask(visibleIds[newIndex])
+        return
+      }
+
+      // Arrow Down
+      if (e.key === 'ArrowDown' && arrowsForList) {
+        e.preventDefault()
+        if (expandedTaskId) return // don't navigate while editing
+        const newIndex = currentIndex >= taskCount - 1 ? taskCount - 1 : currentIndex + 1
+        setFocusedTask(visibleIds[newIndex])
+        return
+      }
+
+      // Enter: expand focused task. Only when focus is on the page or the row itself: on a button
+      // (a toolbar button, a checkbox) Enter must keep activating it.
+      if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey && (!active || active === document.body || active.hasAttribute('data-task-id'))) {
+        e.preventDefault()
+        if (focusedTaskId && !expandedTaskId) {
+          // Not a toggle: the row's own Enter handler has just asked for the same task, and an open/close
+          // transition applies the change a moment later, so a second toggle would close it again.
+          setExpandedTask(focusedTaskId)
+        }
+        return
+      }
+
+      // Escape: collapse expanded, or clear focus
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        if (expandedTaskId) {
+          collapseAll()
+        } else {
+          setFocusedTask(null)
+        }
+        return
+      }
+
+      // Ctrl+K / ⌘K: complete focused/expanded task
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault()
+        const targetId = expandedTaskId || focusedTaskId
+        if (!targetId) return
+        const task = tasks.find((t) => t.id === targetId)
+          ?? resolveSelectedTasks(qc, new Set([targetId]))[0]
+        if (task && !task.done) {
+          void confirmTaskCompletion(task).then((ok) => {
+            if (!ok) return
+            completeTask.mutate(
+              isTaskNestedInCurrentList(task)
+                ? { task, suppressTopLevelUndo: true }
+                : task,
+            )
+            collapseAll()
+            // Move focus to the next top-level task; nested rows simply clear focus.
+            const idx = visibleIds.indexOf(targetId)
+            if (idx >= 0 && idx < taskCount - 1) {
+              setFocusedTask(visibleIds[idx + 1])
+            } else if (idx > 0) {
+              setFocusedTask(visibleIds[idx - 1])
+            } else {
+              setFocusedTask(null)
+            }
+          })
+        }
+        return
+      }
+
+
+      // Ctrl+T / ⌘T or "!" : set due date to today
+      if (((e.ctrlKey || e.metaKey) && e.key === 't') || (!e.ctrlKey && !e.altKey && !e.metaKey && e.key === '!')) {
+        e.preventDefault()
+        const targetId = expandedTaskId || focusedTaskId
+        if (!targetId) return
+        const task = tasks.find((t) => t.id === targetId)
+          ?? resolveSelectedTasks(qc, new Set([targetId]))[0]
+        if (task) {
+          updateTask.mutate({ id: task.id, changes: { due_date: dueToday() }, original: task })
+        }
+        return
+      }
+
+      // Ctrl+Enter / ⌘Enter: save and collapse
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault()
+        if (expandedTaskId) {
+          collapseAll()
+        }
+        return
+      }
+    },
+    [
+      tasks,
+      focusedTaskId,
+      projectId,
+      showNewTask,
+      pasteTasks,
+      completeTask,
+      duplicate,
+      updateTask,
+      deleteTask,
+      sortable,
+      stepTask,
+      setFocusedTask,
+      collapseAll,
+      setIsAdding,
+      qc,
+      setSelectedRange,
+      setExpandedTask,
+      clearSelection,
+    ]
+  )
+
+  useEffect(() => {
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [handleKeyDown])
+
+  // File > New Task (Ctrl+N) arrives from the app menu, which takes the key first.
+  useEffect(() => {
+    return api.onNewTask(() => {
+      if (showNewTask && projectId) {
+        setAddPosition('top')
+        setIsAdding(true)
+      }
+    })
+  }, [showNewTask, projectId])
+
+  // The command palette's "New task" asks the list on screen; the first list that can add a task
+  // takes the request (also one that mounts after the palette navigated to Inbox).
+  const newTaskRequestedAt = useNewTaskRequestStore((s) => s.requestedAt)
+  useEffect(() => {
+    if (newTaskRequestedAt === null || !showNewTask || !projectId) return
+    if (useNewTaskRequestStore.getState().take()) {
+      setAddPosition('top')
+      setIsAdding(true)
+    }
+  }, [newTaskRequestedAt, showNewTask, projectId])
+
+  // Scroll focused task into view
+  useEffect(() => {
+    if (!focusedTaskId || !listRef.current) return
+    const el = listRef.current.querySelector(`[data-task-id="${focusedTaskId}"]`)
+    if (el) {
+      el.scrollIntoView({ block: 'nearest' })
+      // The keyboard selection and DOM focus travel together (roving tabindex), unless the user is
+      // typing somewhere else.
+      const active = document.activeElement
+      // Focus already inside the row (its checkbox, after a completion by keyboard) stays where it is.
+      const insideRow = el instanceof HTMLElement && active !== null && el.contains(active)
+      if (el instanceof HTMLElement && el.tabIndex >= 0 && !insideRow && (!active || active === document.body || listRef.current.contains(active))) {
+        el.focus({ preventScroll: true })
+      }
+    }
+  }, [focusedTaskId])
+
+  const taskInputElement = (
+    <div ref={creationRef}>
+      <NewTaskComposer
+        projectId={projectId!}
+        defaultDueDate={defaultDueDate}
+        inputRef={inputRef}
+        onCancel={() => setIsAdding(false)}
+        onCreated={(task) => {
+          inputRef.current?.focus()
+          onTaskCreated?.(task)
+        }}
+        onBlurOutside={() => {
+        const pendingTaskId = pendingTaskClickRef.current
+        pendingTaskClickRef.current = null
+        if (pendingTaskId !== null) {
+          setTimeout(() => {
+            setExpandedTask(pendingTaskId)
+            setFocusedTask(pendingTaskId)
+          }, 0)
+        }
+        }}
+      />
+    </div>
+  )
+
+  // The end of the list: the composer when it was opened there, else the quiet "New task" row.
+  const endOfList = (
+    <>
+      {isAdding && addPosition === 'bottom' && taskInputElement}
+      {showNewTask && projectId && !isAdding && !isEmpty && (
+        <AddTaskButton
+          onClick={() => {
+            setAddPosition('bottom')
+            setIsAdding(true)
+          }}
+        />
+      )}
+    </>
+  )
+
+  return (
+    <div className={cn('flex h-full flex-col', className)} onClick={handleContainerClick}>
+      {!hideHeader && <PageHeader
+        title={title}
+        subtitle={subtitle}
+        icon={identity && <SmartListIcon list={identity} className="h-5 w-5" />}
+        onClick={handleHeaderClick}
+        actions={
+          headerActions || (showNewTask && projectId) ? (
+            <>
+            {headerActions}
+            {showNewTask && projectId && (
+            <button
+              type="button"
+              onClick={startAdding}
+              {...holdToTalk}
+              className="flex h-7 w-7 select-none items-center justify-center rounded-control text-[var(--text-secondary)] transition-colors duration-fade-fast hover:bg-[var(--bg-hover)] hover:text-[var(--accent-blue)]"
+              aria-label="New task"
+              title="Click to type a task, hold to say it"
+            >
+              <Plus className="h-4 w-4" />
+            </button>
+            )}
+            </>
+          ) : undefined
+        }
+      />}
+
+      <ReadingScroll ref={listRef} onClick={handleScrollAreaClick}>
+        {headerContent}
+
+        {isAdding && addPosition === 'top' && taskInputElement}
+
+        {isEmpty && !isAdding ? (
+          <EmptyState
+            icon={Inbox}
+            identity={identity}
+            title={emptyTitle}
+            subtitle={emptySubtitle}
+            warm={emptyWarm}
+            extra={emptyExtra}
+            action={
+              showNewTask && projectId ? (
+                <Button variant="secondary" onClick={startAdding} {...holdToTalk} title="Click to type a task, hold to say it">
+                  <Plus className="h-4 w-4" />
+                  Add task
+                </Button>
+              ) : undefined
+            }
+          />
+        ) : sortable ? (
+          <SortableContext
+            items={tasks.filter((t) => canReorderTask(taskOrder, t)).map((t) => `task-${t.id}`)}
+            strategy={verticalListSortingStrategyForeignSafe}
+          >
+            {tasks.length > 0 && (
+              <TaskRowGroup>
+                {tasks.map((task, i) => (
+                  <Fragment key={task.id}>
+                    {insertIndex === i && (
+                      <div aria-hidden="true" className="mx-4 flex items-center gap-1 py-0.5">
+                        <div className="h-1.5 w-1.5 rounded-full bg-[var(--accent-blue)]" />
+                        <div className="h-[2px] flex-1 rounded-full bg-[var(--accent-blue)]" />
+                      </div>
+                    )}
+                    <TaskRow task={task} sortable={canReorderTask(taskOrder, task)} inSortableList />
+                  </Fragment>
+                ))}
+                {insertIndex != null && insertIndex >= tasks.length && (
+                  <div aria-hidden="true" className="mx-4 flex items-center gap-1 py-0.5">
+                    <div className="h-1.5 w-1.5 rounded-full bg-[var(--accent-blue)]" />
+                    <div className="h-[2px] flex-1 rounded-full bg-[var(--accent-blue)]" />
+                  </div>
+                )}
+              </TaskRowGroup>
+            )}
+          </SortableContext>
+        ) : (
+          tasks.length > 0 && <TaskRowGroup>{tasks.map((task) => <TaskRow key={task.id} task={task} />)}</TaskRowGroup>
+        )}
+
+        {newTaskPlacement === 'after-tasks' && endOfList}
+
+        {children}
+
+        {newTaskPlacement === 'after-children' && endOfList}
+      </ReadingScroll>
+      <SelectionBar />
+    </div>
+  )
+}

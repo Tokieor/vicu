@@ -1,0 +1,659 @@
+@import '../assets/tokens.css';
+
+.hidden {
+  display: none;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Form controls take the page font, so they match the rest of the window (D-11). */
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+/*
+ * Colours come from the token roles, which switch with the `.dark` class on <html>. The class is
+ * set from the configured app theme (followConfiguredTheme in lib/theme.ts), so this window is
+ * dark whenever the main window is, whatever the media query of a transparent window reports.
+ */
+
+/* Drag handle: visible on hover (hover driven by main-process cursor polling) */
+.drag-handle {
+  -webkit-app-region: drag;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.drag-handle-pill {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgb(var(--text-secondary-rgb) / 0.35);
+  opacity: 0;
+  transition: opacity var(--dur-fade-fast) var(--ease-standard);
+  pointer-events: none;
+}
+
+.drag-handle.hover .drag-handle-pill {
+  opacity: 1;
+}
+
+/* Container card */
+.container {
+  position: fixed;
+  top: 20px;
+  left: 20px;
+  right: 20px;
+  bottom: 20px;
+  background: rgb(var(--bg-primary-rgb) / 0.90);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-radius: var(--radius-card);
+  border: 1px solid rgb(var(--border-color-rgb) / 0.6);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.12), 0 1px 4px rgba(0, 0, 0, 0.08);
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity var(--dur-fade-fast) var(--ease-standard), transform var(--dur-fade-fast) var(--ease-standard);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.dark .container {
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4), 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+.container.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Status bar (offline / pending sync indicator) */
+.status-bar {
+  padding: 5px 16px;
+  font-size: var(--type-caption-size);
+  font-style: italic;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.status-bar.offline {
+  color: var(--status-today);
+  background: rgb(var(--status-today-rgb) / 0.08);
+}
+
+.status-bar.pending {
+  color: var(--text-secondary);
+}
+
+.status-bar.failed {
+  color: var(--danger);
+  background: rgb(var(--danger-rgb) / 0.08);
+}
+
+.status-bar.standalone {
+  color: var(--accent-blue);
+  background: rgb(var(--accent-blue-rgb) / 0.08);
+}
+
+/* Task list */
+.task-list {
+  -webkit-app-region: no-drag;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Loading state */
+.loading {
+  padding: 16px 20px;
+  font-size: var(--type-task-title-size);
+  color: var(--text-secondary);
+}
+
+/* Empty state */
+.empty-state {
+  padding: 24px 20px;
+  font-size: var(--type-task-title-size);
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+/* Task item: [checkbox] [title + notes] [due phrase] [priority mark] (design system, section 4) */
+.task-item {
+  display: flex;
+  align-items: flex-start;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-color);
+  gap: 10px;
+  transition: background var(--dur-fade-fast) var(--ease-standard);
+}
+
+.task-item:last-child {
+  border-bottom: none;
+}
+
+.task-item:hover {
+  background: var(--bg-hover);
+}
+
+/* Checkbox: a 20 px circle, like the main window. The pseudo-element ::before grows the hit area to 26 px. */
+.task-checkbox {
+  -webkit-app-region: no-drag;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--control-ring);
+  border-radius: 50%;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  transition: border-color var(--dur-fade-fast), background var(--dur-fade-fast);
+  position: relative;
+}
+
+.task-checkbox::before {
+  content: '';
+  position: absolute;
+  inset: -3px;
+}
+
+.task-checkbox:hover {
+  border-color: var(--accent-fill);
+  background: rgb(var(--accent-fill-rgb) / 0.10);
+}
+
+.task-checkbox:checked {
+  background: var(--accent-fill);
+  border-color: var(--accent-fill);
+}
+
+.task-checkbox:checked::after {
+  content: '';
+  position: absolute;
+  left: 6px;
+  top: 2px;
+  width: 5px;
+  height: 9px;
+  border: solid var(--on-accent);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.task-checkbox:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Task content */
+.task-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+/* Title row: title + description icon */
+.task-title-row {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.task-title {
+  -webkit-app-region: no-drag;
+  font-size: var(--type-task-title-size);
+  font-weight: var(--type-task-title-weight);
+  color: var(--text-primary);
+  line-height: var(--type-task-title-line);
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Description indicator icon */
+.description-icon {
+  -webkit-app-region: no-drag;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 20px;
+  font-size: var(--type-task-title-size);
+  line-height: var(--type-task-title-line);
+  color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity var(--dur-fade-fast);
+  user-select: none;
+}
+
+.description-icon:hover {
+  opacity: 1;
+  color: var(--accent-blue);
+}
+
+.task-title:hover {
+  text-decoration: underline;
+  color: var(--accent-blue);
+}
+
+.task-title.standalone {
+  cursor: default;
+}
+
+.task-title.standalone:hover {
+  text-decoration: none;
+  color: var(--text-primary);
+}
+
+.task-item.completing .task-title,
+.task-item.task-done .task-title {
+  text-decoration: line-through;
+  opacity: 0.5;
+}
+
+/* Task description (expandable) */
+.task-description {
+  -webkit-app-region: no-drag;
+  font-size: var(--type-meta-size);
+  color: var(--text-secondary);
+  line-height: 1.4;
+  margin-top: 4px;
+  padding: 6px 8px;
+  background: var(--bg-hover);
+  border-radius: var(--radius-control);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  max-height: 120px;
+  overflow-y: auto;
+  cursor: text;
+}
+
+/* Rich-text description: HTML content from Vikunja (TipTap output). */
+.task-description-rich {
+  white-space: normal;
+}
+.task-description-rich p { margin: 0 0 0.4em 0; }
+.task-description-rich p:last-child { margin-bottom: 0; }
+.task-description-rich ul,
+.task-description-rich ol { margin: 0.25em 0 0.4em 1.2em; padding: 0; }
+.task-description-rich li { margin: 0.1em 0; }
+.task-description-rich h1,
+.task-description-rich h2,
+.task-description-rich h3,
+.task-description-rich h4 { margin: 0.5em 0 0.25em; font-weight: 600; }
+.task-description-rich strong { font-weight: 600; color: inherit; }
+.task-description-rich em { font-style: italic; }
+.task-description-rich s { text-decoration: line-through; }
+.task-description-rich a { color: var(--accent-blue); text-decoration: underline; }
+.task-description-rich code {
+  background: rgb(var(--text-secondary-rgb) / 0.15);
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+.task-description-rich pre {
+  background: rgb(var(--text-secondary-rgb) / 0.15);
+  padding: 0.4em 0.6em;
+  border-radius: var(--radius-control);
+  font-size: 0.9em;
+  overflow-x: auto;
+}
+.task-description-rich blockquote {
+  border-left: 2px solid var(--border-color);
+  padding-left: 0.6em;
+  margin: 0.3em 0;
+  color: var(--text-secondary);
+}
+.task-description-rich ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+.task-description-rich ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.35em;
+}
+
+.task-description:hover {
+  background: var(--bg-selected);
+}
+
+.task-description.hidden {
+  display: none;
+}
+
+/* Due phrase: the trailing cluster, level with the title line, coloured by status (section 4) */
+.task-due {
+  flex-shrink: 0;
+  align-self: flex-start;
+  font-size: var(--type-meta-size);
+  font-weight: var(--type-meta-weight);
+  color: var(--text-secondary);
+  line-height: var(--type-task-title-line);
+  white-space: nowrap;
+}
+
+.task-due.overdue {
+  color: var(--status-overdue);
+}
+
+.task-due.today {
+  color: var(--status-today);
+}
+
+.task-due.upcoming {
+  color: var(--text-secondary);
+}
+
+/* A time block (section 16.4), in the same colour as on a row of the main window */
+.task-due.task-block {
+  color: var(--accent-blue);
+}
+
+/* Priority mark: the shared SVG (src/shared/priority-mark-svg.ts), drawn in the role colour at the end of the row */
+.task-priority {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-self: flex-start;
+  margin-left: 0;
+  margin-top: 3px;
+  line-height: 0;
+}
+
+.task-priority svg { display: block; }
+
+.task-priority.priority-1 { color: var(--priority-low); }
+.task-priority.priority-2 { color: var(--priority-medium); }
+.task-priority.priority-3 { color: var(--priority-high); }
+.task-priority.priority-4 { color: var(--priority-urgent); }
+.task-priority.priority-5 { color: var(--priority-urgent); }
+
+/* Selected task */
+.task-item.selected {
+  background: var(--bg-selected);
+}
+
+/* Inline edit mode */
+.task-item.editing {
+  border-left: 3px solid var(--accent-blue);
+  padding-left: 13px;
+}
+
+.task-edit-wrapper {
+  -webkit-app-region: no-drag;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.task-edit-title {
+  font-size: var(--type-task-title-size);
+  font-family: inherit;
+  color: var(--text-primary);
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-control);
+  padding: 4px 6px;
+  width: 100%;
+  outline: none;
+}
+
+.task-edit-title:focus {
+  border-color: var(--accent-blue);
+}
+
+.task-edit-description {
+  font-size: var(--type-meta-size);
+  font-family: inherit;
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-control);
+  padding: 6px 8px;
+  width: 100%;
+  resize: vertical;
+  min-height: 40px;
+  max-height: 120px;
+  outline: none;
+  line-height: 1.4;
+}
+
+.task-edit-description:focus {
+  border-color: var(--accent-blue);
+}
+
+.task-edit-hint {
+  font-size: var(--type-caption-size);
+  color: var(--text-secondary);
+  text-align: right;
+}
+
+/* Completed undo message */
+.task-item.completed-undo {
+  padding: 10px 16px;
+}
+
+.task-item.completed-undo .completed-message {
+  font-size: var(--type-task-title-size);
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+/* Error message */
+.error-message {
+  padding: 8px 16px;
+  font-size: var(--type-meta-size);
+  color: var(--danger);
+  opacity: 0;
+  transition: opacity var(--dur-fade-fast) var(--ease-standard);
+}
+
+.error-message.show {
+  opacity: 1;
+}
+
+/* Scrollbar: auto-hiding overlay style */
+.task-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.task-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.task-list::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 3px;
+  transition: background var(--dur-fade-base);
+}
+
+.task-list:hover::-webkit-scrollbar-thumb {
+  background: rgb(var(--text-secondary-rgb) / 0.35);
+}
+
+.task-list:hover::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--text-secondary-rgb) / 0.55);
+}
+
+/* Obsidian link button */
+.obsidian-link-btn {
+  -webkit-app-region: no-drag;
+  background: none;
+  border: none;
+  color: #7C3AED;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.5;
+  transition: opacity var(--dur-fade-fast), background var(--dur-fade-fast);
+  flex-shrink: 0;
+}
+.obsidian-link-btn:hover { opacity: 1; background: rgba(124, 58, 237, 0.12); }
+
+/* Browser link button */
+.browser-link-btn {
+  -webkit-app-region: no-drag;
+  background: none;
+  border: none;
+  color: var(--accent-blue);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 3px;
+  display: inline-flex;
+  align-items: center;
+  opacity: 0.5;
+  transition: opacity var(--dur-fade-fast), background var(--dur-fade-fast);
+  flex-shrink: 0;
+}
+.browser-link-btn:hover { opacity: 1; background: rgb(var(--accent-blue-rgb) / 0.12); }
+
+/* Focus (card 1.5): the ring the main window draws, outside the control. Quick View rows are not
+ * focusable; the keyboard cursor is the .selected row. */
+button:focus-visible,
+.task-checkbox:focus-visible,
+.task-edit-title:focus-visible,
+.task-edit-description:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+/* Reduced motion (card 1.5): the rules of the base layer in assets/index.css, which this window does
+ * not load. Colour and opacity only, at most fade.fast; transforms still apply, instantly. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    transition-property: color, background-color, border-color, text-decoration-color, fill, stroke, opacity !important;
+    transition-duration: var(--dur-fade-fast) !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* The window appears with a fade only, not from 4 px above. */
+  .container,
+  .container.visible {
+    transform: none;
+  }
+}
+
+/*
+ * Forced colours (card 5.2): system colours replace the tints and the translucent card. The card keeps an
+ * edge, the circle checkbox is a ring and, checked, a filled disc, the selected row is highlighted, the
+ * priority mark is drawn in the text colour (its shape carries the level) and disabled things are grey.
+ */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline-color: Highlight;
+  }
+
+  svg {
+    color: inherit !important;
+  }
+
+  .container {
+    background: Canvas;
+    border: 1px solid CanvasText;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .status-bar {
+    border-bottom-color: CanvasText;
+  }
+
+  .task-checkbox {
+    border-color: CanvasText;
+  }
+
+  .task-checkbox:hover {
+    border-color: Highlight;
+  }
+
+  .task-checkbox:checked {
+    background: Highlight;
+    border-color: Highlight;
+  }
+
+  .task-checkbox:checked::after {
+    border-color: HighlightText;
+  }
+
+  .task-checkbox:disabled:not(:checked) {
+    border-color: GrayText;
+    opacity: 1;
+  }
+
+  .task-item.selected,
+  .task-item.selected * {
+    color: HighlightText;
+  }
+
+  .task-item.selected {
+    background: Highlight;
+    forced-color-adjust: none;
+  }
+
+  .task-item.selected .task-checkbox {
+    border-color: HighlightText;
+  }
+
+  .task-item.selected .task-checkbox:checked {
+    background: HighlightText;
+  }
+
+  .task-item.selected .task-checkbox:checked::after {
+    border-color: Highlight;
+  }
+
+  .task-item.editing {
+    border-left-color: Highlight;
+  }
+
+  .task-description {
+    border: 1px solid CanvasText;
+  }
+
+  .task-title:hover {
+    color: LinkText;
+  }
+
+  .obsidian-link-btn,
+  .browser-link-btn {
+    opacity: 1;
+    border: 1px solid ButtonText;
+  }
+
+  .task-item.completing .task-title,
+  .task-item.task-done .task-title {
+    opacity: 1;
+  }
+}

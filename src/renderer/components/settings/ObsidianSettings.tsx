@@ -1,0 +1,150 @@
+import { Button } from '@/components/shared/Button'
+import { useState, useCallback } from 'react'
+import type { AppConfig } from '@/lib/vikunja-types'
+
+interface ObsidianSettingsProps {
+  config: AppConfig
+  onChange: (partial: Partial<AppConfig>) => void
+  disabled?: boolean
+}
+
+export function ObsidianSettings({ config, onChange, disabled }: ObsidianSettingsProps) {
+  const [expanded, setExpanded] = useState(false)
+  const [showKey, setShowKey] = useState(false)
+  const [showSetupInfo, setShowSetupInfo] = useState(false)
+  const [testStatus, setTestStatus] = useState<{ type: 'idle' | 'loading' | 'success' | 'error'; message?: string }>({ type: 'idle' })
+  const mode = config.obsidian_mode ?? 'ask'
+
+  const handleTest = useCallback(async () => {
+    setTestStatus({ type: 'loading' })
+    try {
+      const result = await window.api.testObsidianConnection()
+      if (result.success) {
+        setTestStatus({ type: 'success', message: 'Connected' })
+      } else {
+        setTestStatus({ type: 'error', message: result.error || 'Connection failed' })
+      }
+    } catch {
+      setTestStatus({ type: 'error', message: 'Connection failed' })
+    }
+  }, [])
+
+  return (
+    <div className={`rounded-card border border-[var(--border-color)] bg-[var(--bg-primary)] p-5${disabled ? ' opacity-50 pointer-events-none' : ''}`}>
+      <button
+        type="button"
+        className="flex w-full items-center justify-between pointer-events-auto"
+        onClick={() => !disabled && setExpanded(!expanded)}
+      >
+        <h2 className="text-sm font-semibold text-[var(--text-primary)]">
+          Obsidian Integration{disabled ? ' (requires Quick Entry)' : ''}
+        </h2>
+        {!disabled && <span className="text-xs text-[var(--text-secondary)]">{expanded ? '\u25B2' : '\u25BC'}</span>}
+      </button>
+
+      {!disabled && expanded && (
+        <div className="mt-4 space-y-3">
+          <div>
+            <label className="mb-1 block text-xs text-[var(--text-secondary)]">Note Linking</label>
+            <select
+              value={mode}
+              onChange={(e) => onChange({ obsidian_mode: e.target.value as 'off' | 'ask' | 'always' })}
+              className="w-full rounded-control border border-[var(--border-color)] bg-[var(--bg-secondary)] px-3 py-2 text-sm text-[var(--text-primary)]"
+            >
+              <option value="off">Off</option>
+              <option value="ask">Ask ({window.api.platform === 'darwin' ? '\u2318L' : 'Ctrl+L'})</option>
+              <option value="always">Always auto-link</option>
+            </select>
+          </div>
+
+          {mode !== 'off' && (
+            <>
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowSetupInfo(!showSetupInfo)}
+                  className="text-xs text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                >
+                  How to set up Obsidian {showSetupInfo ? '\u25BC' : '\u25B6'}
+                </button>
+                {showSetupInfo && (
+                  <div className="mt-2 rounded-card bg-[var(--bg-secondary)] p-3 text-xs text-[var(--text-secondary)]">
+                    <p className="mb-2">
+                      <span className="font-semibold">1. Local REST API</span> (by Adam Coddington)
+                    </p>
+                    <p>Open Obsidian &rarr; Settings (gear icon, bottom-left) &rarr; Community Plugins &rarr; Browse</p>
+                    <p>Search &ldquo;Local REST API&rdquo; &rarr; Install &rarr; Enable</p>
+                    <p>Go back to Settings &rarr; scroll to &ldquo;Local REST API&rdquo; under Community Plugins</p>
+                    <p>The API Key is shown at the top of the plugin&apos;s settings panel &mdash; click the copy button and paste it below</p>
+                    <p className="mb-3">Leave all other settings at their defaults (HTTPS on port 27124)</p>
+
+                    <p className="mb-2">
+                      <span className="font-semibold">2. Advanced URI</span> (by Vinzent03)
+                    </p>
+                    <p>Same steps &mdash; search &ldquo;Advanced URI&rdquo; in Community Plugins &rarr; Install &rarr; Enable</p>
+                    <p>In the plugin settings, turn on &ldquo;Use UID instead of file paths&rdquo;</p>
+                    <p>This makes note links survive file renames. All other settings can stay at their defaults.</p>
+                    <p>Vicu adds a <code>uid</code> property to a note only when you save a task linked to it; notes you do not link are never changed.</p>
+
+                    <p className="mt-2 border-t border-[var(--border-color)] pt-2">
+                      Once both plugins are enabled and Obsidian is running, click Test Connection below to verify.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs text-[var(--text-secondary)]">API Key</label>
+                <div className="flex gap-2">
+                  <input
+                    type={showKey ? 'text' : 'password'}
+                    value={config.obsidian_api_key ?? ''}
+                    onChange={(e) => onChange({ obsidian_api_key: e.target.value })}
+                    placeholder="Obsidian > Settings > Local REST API > Copy API Key"
+                    className="flex-1 rounded-control border border-[var(--border-color)] bg-[var(--bg-secondary)] px-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]"
+                  />
+                  <Button variant="quiet" onClick={() => setShowKey(!showKey)}>
+                    {showKey ? 'Hide' : 'Show'}
+                  </Button>
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs text-[var(--text-secondary)]">Vault Name</label>
+                <input
+                  type="text"
+                  value={config.obsidian_vault_name ?? ''}
+                  onChange={(e) => onChange({ obsidian_vault_name: e.target.value })}
+                  placeholder="Shown in Obsidian's title bar"
+                  className="w-full rounded-control border border-[var(--border-color)] bg-[var(--bg-secondary)] px-3 py-2 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1 block text-xs text-[var(--text-secondary)]">Port</label>
+                <input
+                  type="number"
+                  value={config.obsidian_port ?? 27124}
+                  onChange={(e) => onChange({ obsidian_port: Number(e.target.value) || 27124 })}
+                  className="w-32 rounded-control border border-[var(--border-color)] bg-[var(--bg-secondary)] px-3 py-2 text-sm text-[var(--text-primary)]"
+                />
+              </div>
+
+              <div>
+                <Button variant="secondary" onClick={handleTest} disabled={testStatus.type === 'loading'}>
+                  {testStatus.type === 'loading' ? 'Testing...' : 'Test Connection'}
+                </Button>
+                {testStatus.type === 'success' && (
+                  <span className="ml-2 text-xs text-status-done">{testStatus.message}</span>
+                )}
+                {testStatus.type === 'error' && (
+                  <span className="ml-2 text-xs text-danger">{testStatus.message}</span>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}

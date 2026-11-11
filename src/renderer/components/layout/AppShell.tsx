@@ -1,0 +1,886 @@
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useQueryClient, type QueryClient } from '@tanstack/react-query'
+import { Outlet, useMatches, useNavigate } from '@tanstack/react-router'
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  pointerWithin,
+  rectIntersection,
+  useSensor,
+  useSensors,
+} from '@dnd-kit/core'
+import type { CollisionDetection, DragStartEvent, DragEndEvent, DragMoveEvent } from '@dnd-kit/core'
+import { useSidebarStore } from '@/stores/sidebar-store'
+import { useSelectionStore } from '@/stores/selection-store'
+import { useUpdateTask, useReorderTask, useReorderProject, useAddLabel, applyReorderToCache } from '@/hooks/use-task-mutations'
+import { ProjectActionsContext, useProjectActions } from '@/hooks/use-project-actions'
+import { dropZone } from '@/lib/project-moves'
+import { projectDropMove } from '@/lib/project-category-moves'
+import { commitProjectMove } from '@/hooks/use-project-categories'
+import { SYNCED_PREFS_QUERY_KEY } from '@/hooks/use-synced-prefs'
+import { setProjectDropTarget, useProjectDropStore, type ProjectDropTarget } from '@/stores/project-drop-store'
+import type { SyncedPrefsSnapshot } from '../../../shared/synced-prefs'
+import { ProjectActionsHost } from '@/components/projects/ProjectActionsHost'
+import { commitSync } from '@/lib/sync-commit'
+import { taskDropAnimation, type DropLanding } from '@/lib/drop-animation'
+import { overlayBesidePointer, rowBandAtPointer } from '@/lib/drag-overlay'
+import { motionEasing, motionMs } from '@/lib/motion'
+import { useReducedMotion } from '@/hooks/use-reduced-motion'
+import { useConfirmDelete } from '@/hooks/use-confirm-delete'
+import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
+import { registerConfirm } from '@/lib/confirm-bridge'
+import { resolveSelectedTasks } from '@/lib/task-selection'
+import { useSyncedPrefsEvents } from '@/hooks/use-synced-prefs'
+import { useReorderStore } from '@/stores/reorder-store'
+import { api } from '@/lib/api'
+import { applyTheme } from '@/lib/theme'
+import type { ThemeOption } from '@/lib/theme'
+import type { Task, Project, CustomList, AppConfig } from '@/lib/vikunja-types'
+import type { ProjectTreeNode } from '@/hooks/use-projects'
+import { useCompletedTasksStore } from '@/stores/completed-tasks-store'
+import { completionHold } from '@/stores/completion-hold-store'
+import { Sidebar } from './Sidebar'
+import { ContentArea } from './ContentArea'
+import { WindowControls } from './WindowControls'
+import { CommandPalette } from './CommandPalette'
+// The sign-in screens are only needed when nobody is signed in: their own chunks.
+const SetupView = lazy(() => import('@/views/SetupView').then((module) => ({ default: module.SetupView })))
+const ReauthView = lazy(() => import('@/views/ReauthView').then((module) => ({ default: module.ReauthView })))
+import { TaskDragOverlay } from '@/components/task-list/TaskDragOverlay'
+import { ProjectDragOverlay } from '@/components/sidebar/ProjectDragOverlay'
+import { CustomListDragOverlay } from '@/components/sidebar/CustomListDragOverlay'
+import { SectionDragOverlay } from '@/components/task-list/SectionDragOverlay'
+import { UpdateBanner } from '@/components/UpdateBanner'
+import { ToastHost } from '@/components/shared/ToastHost'
+import { TemplateEditHost } from '@/components/task-list/TemplateEditHost'
+import { VoiceHost } from '@/components/voice/VoiceHost'
+import { CommentsPaneHost } from '@/components/comments/CommentsPane'
+import { AskHost } from '@/components/ai/AskPane'
+import { DictationHost } from '@/components/ai/DictationHost'
+import { MakeTasksDialog } from '@/components/ai/MakeTasksDialog'
+import { AiHost } from '@/components/ai/AiHost'
+import { ProjectAccessProvider } from '@/hooks/use-project-access'
+import { APP_CONFIG_QUERY_KEY, useAppConfig } from '@/hooks/use-app-config'
+import { openTaskInApp } from '@/lib/open-task'
+import { toast } from '@/stores/toast-store'
+import { useOfflineQueueSync } from '@/hooks/use-offline-queue'
+import { useFreshness } from '@/hooks/use-freshness'
+import { useManualRefresh } from '@/hooks/use-manual-refresh'
+import { useUIStore } from '@/stores/ui-store'
+import { refreshTasks } from '@/lib/task-refresh'
+import { reloadCompletionSound, setCompletionSoundEnabled } from '@/lib/completion-sound'
+import { useTodayOverdueCount } from '@/hooks/use-today-overdue-count'
+import { renderBadgeDataUrl } from '@/lib/render-badge-icon'
+import { anchorsFor, insertPosition as slotPosition, planMove, planSiblingMove } from '@/lib/reorder-positions'
+import { canReorderTask, type TaskOrderKey } from '../../../shared/task-order'
+import { usePrintStore } from '@/stores/print-store'
+import { buildPrintHtml } from '@/lib/print-template'
+import { sanitizeTaskHtml } from '@/lib/sanitize-html'
+
+const MIN_WIDTH = 180
+const MAX_WIDTH = 360
+
+type AppState = 'loading' | 'setup' | 'ready' | 'reauth'
+
+interface ReauthInfo {
+  authMethod: string
+  vikunjaUrl: string
+  lastUsername?: string
+}
+
+type DragItem =
+  | { type: 'task'; task: Task; tasks: Task[] }
+  | { type: 'project'; node: ProjectTreeNode }
+  | { type: 'custom-list'; list: CustomList }
+  | { type: 'section'; project: Project; siblings: Project[] }
+
+/**
+ * Where a dragged project would land for this drop target, from the caches (the active projects,
+ * the Inbox and the synced categories), or null when it cannot go there.
+ */
+function projectDropFor(queryClient: QueryClient, movedId: number, target: ProjectDropTarget) {
+  const projects = (queryClient.getQueryData<Project[]>(['projects']) ?? []).filter((p) => !p.is_archived)
+  const inboxId = queryClient.getQueryData<AppConfig | null>(APP_CONFIG_QUERY_KEY)?.inbox_project_id ?? 0
+  const values = queryClient.getQueryData<SyncedPrefsSnapshot>(SYNCED_PREFS_QUERY_KEY)?.values ?? {}
+  return { projects, move: projectDropMove(projects, inboxId, values, movedId, target) }
+}
+
+function BadgeSyncEnabled() {
+  const count = useTodayOverdueCount()
+  useEffect(() => {
+    if (count === null) return
+    const dataUrl = renderBadgeDataUrl(count)
+    api.setTaskBadge(count, dataUrl)
+  }, [count])
+  useEffect(() => {
+    return () => { api.setTaskBadge(0, null) }
+  }, [])
+  return null
+}
+
+function BadgeSync() {
+  const { data: config } = useAppConfig()
+  const enabled = config?.show_today_overdue_badge === true
+  return enabled ? <BadgeSyncEnabled /> : null
+}
+
+function CompletionSoundSync() {
+  const { data: config } = useAppConfig()
+  const soundEnabled = config?.task_completion_sound_enabled !== false
+  const soundPath = config?.task_completion_sound_path ?? null
+  useEffect(() => {
+    setCompletionSoundEnabled(soundEnabled)
+  }, [soundEnabled])
+  useEffect(() => {
+    void reloadCompletionSound()
+  }, [soundPath])
+  return null
+}
+
+// Single confirm dialog mounted app-wide so non-component code (the context
+// menu, the keyboard handler) can `await confirmDelete(msg)` via the bridge.
+function GlobalConfirm() {
+  const { confirmDelete, dialogProps } = useConfirmDelete()
+  useEffect(() => {
+    registerConfirm(confirmDelete)
+    return () => registerConfirm(null)
+  }, [confirmDelete])
+  return <ConfirmDialog {...dialogProps} />
+}
+
+const DRAG_OVERLAY_MODIFIERS = [overlayBesidePointer]
+
+export function AppShell() {
+  const queryClient = useQueryClient()
+  const { sidebarWidth, setSidebarWidth } = useSidebarStore()
+  const { setExpandedTask } = useSelectionStore()
+  const updateTask = useUpdateTask()
+  const reorderTask = useReorderTask()
+  const reorderProject = useReorderProject()
+  const projectActionsApi = useProjectActions()
+  const addLabel = useAddLabel()
+  // Another device's synced settings (the Inbox, the task order) arrive here.
+  useSyncedPrefsEvents()
+  const reducedMotion = useReducedMotion()
+  // The drop travels into the slot over fade.base with the enter curve; reduced motion has none. A
+  // task sent somewhere else lands there instead: handleDragEnd says where, before the animation runs.
+  const dropLanding = useRef<DropLanding | null>(null)
+  const dropAnimation = useMemo(
+    () =>
+      taskDropAnimation({ duration: motionMs('fade-base'), easing: motionEasing('enter') }, reducedMotion, () => {
+        const landing = dropLanding.current
+        dropLanding.current = null
+        return landing
+      }),
+    [reducedMotion],
+  )
+  const dragging = useRef(false)
+  const startX = useRef(0)
+  const startWidth = useRef(0)
+  const sidebarRef = useRef<HTMLDivElement>(null)
+  const [appState, setAppState] = useState<AppState>('loading')
+  const [reauthInfo, setReauthInfo] = useState<ReauthInfo | null>(null)
+  const [dragItem, setDragItem] = useState<DragItem | null>(null)
+  // The grabbing cursor, over everything, while something is dragged (index.css).
+  const anythingDragged = dragItem !== null
+  useEffect(() => {
+    if (!anythingDragged) return
+    const root = document.documentElement
+    root.setAttribute('data-dragging', '')
+    return () => root.removeAttribute('data-dragging')
+  }, [anythingDragged])
+  const themeRef = useRef<ThemeOption>('system')
+  const navigate = useNavigate()
+
+  // The main-process offline queue: pending / failed counts, replay results, temp-id remapping.
+  useOfflineQueueSync()
+  // Task lists refetch on focus and on a timer, and the date-dependent views roll over at midnight.
+  useFreshness()
+  useManualRefresh()
+
+  // On a route change the completion hold ends and the recently-completed-tasks store is cleared,
+  // so completed tasks don't bleed into the next view.
+  const routeMatches = useMatches()
+  const routePath = routeMatches[routeMatches.length - 1]?.pathname ?? ''
+  const prevRouteRef = useRef(routePath)
+  useEffect(() => {
+    if (prevRouteRef.current !== routePath) {
+      // Leaving the view ends every completion hold at once: the held rows collapse into the toast
+      // (which keeps what Undo needs), then whatever else the store still shows is dropped.
+      completionHold.navigate()
+      useCompletedTasksStore.getState().clear()
+      // Drop any multi-selection so its ids can't act on a different view's tasks.
+      useSelectionStore.getState().clearSelection()
+      // Flush stale optimistic data (complete/uncomplete skip invalidation
+      // to keep tasks in-place, so we sync on navigation instead). Nothing is refetched while
+      // offline changes are still queued: that would erase their optimistic state.
+      refreshTasks(queryClient, [['tasks'], ['view-tasks'], ['section-tasks']])
+      prevRouteRef.current = routePath
+    }
+  }, [routePath, queryClient])
+
+  // TanStack Query's browser focus manager only observes page visibility. An Electron
+  // window can lose and regain focus without becoming hidden, so explicitly refresh
+  // projects to pick up archives/restores made in Vikunja or another Vicu client. (Task lists
+  // are refreshed by useFreshness, throttled.)
+  useEffect(() => {
+    const refreshProjects = () => {
+      queryClient.invalidateQueries({ queryKey: ['projects'] })
+    }
+    window.addEventListener('focus', refreshProjects)
+    return () => window.removeEventListener('focus', refreshProjects)
+  }, [queryClient])
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
+  )
+
+  const collisionDetection: CollisionDetection = useCallback(
+    (args) => {
+      const activeType = dragItem?.type
+
+      // A project goes where the pointer is: onto a project row (before, into or after it) or
+      // onto a PROJECTS header (the top level). Archived rows are not targets.
+      if (activeType === 'project') {
+        return pointerWithin(args).filter((c) => {
+          const data = c.data?.droppableContainer?.data?.current as Record<string, unknown> | undefined
+          return data?.type === 'project' || data?.type === 'project-root' || data?.type === 'project-category'
+        })
+      }
+
+      // For section and custom-list drags, use rect intersection only (sortable reorder)
+      if (activeType === 'custom-list' || activeType === 'section') {
+        return rectIntersection(args)
+      }
+
+      // For task drags: sidebar droppables (project, label) take priority
+      const pointerCollisions = pointerWithin(args)
+      const sidebarDrop = pointerCollisions.find((c) => {
+        const type = c.data?.droppableContainer?.data?.current?.type
+        return type === 'project' || type === 'label'
+      })
+      if (sidebarDrop) return [sidebarDrop]
+
+      // The Plan screen's timeline and top rows go by the pointer too.
+      const planDrop = pointerCollisions.find((c) => c.data?.droppableContainer?.data?.current?.type === 'plan-drop')
+      if (planDrop) return [planDrop]
+
+      // A row, section header or section end goes by the pointer too: the overlay is drawn beside it,
+      // so its box says nothing about where the task is going.
+      const notPlan = (c: { data?: { droppableContainer?: { data?: { current?: { type?: unknown } } } } }) =>
+        c.data?.droppableContainer?.data?.current?.type !== 'plan-drop'
+      const underPointer = pointerCollisions.filter(notPlan)
+      if (underPointer.length > 0) return underPointer
+
+      // Over no target (beside the list): the row's own column at the pointer's height.
+      const row = args.active.rect.current.initial
+      const collisionRect = row && args.pointerCoordinates ? rowBandAtPointer(row, args.pointerCoordinates) : args.collisionRect
+      return rectIntersection({ ...args, collisionRect }).filter(notPlan)
+    },
+    [dragItem?.type]
+  )
+
+  const handleDragStart = useCallback(
+    (event: DragStartEvent) => {
+      const data = event.active.data.current as Record<string, unknown>
+      const type = data?.type as string
+      dropLanding.current = null
+
+      if (type === 'task') {
+        const task = data.task as Task
+        // If the grabbed row is part of the multi-selection, carry all of it;
+        // otherwise drag just this task.
+        const { selectedTaskIds } = useSelectionStore.getState()
+        let dragTasks: Task[] = [task]
+        if (selectedTaskIds.has(task.id) && selectedTaskIds.size > 1) {
+          const resolved = resolveSelectedTasks(queryClient, selectedTaskIds)
+          if (resolved.some((t) => t.id === task.id)) dragTasks = resolved
+        }
+        setDragItem({ type: 'task', task, tasks: dragTasks })
+        setExpandedTask(null)
+      } else if (type === 'project') {
+        const node = data.node as ProjectTreeNode
+        setDragItem({ type: 'project', node })
+      } else if (type === 'section') {
+        const project = data.project as Project
+        const siblings = data.siblings as Project[]
+        setDragItem({ type: 'section', project, siblings })
+      } else if (type === 'custom-list') {
+        const list = data.list as CustomList
+        setDragItem({ type: 'custom-list', list })
+      }
+    },
+    [setExpandedTask, queryClient]
+  )
+
+  // While a project is dragged, work out the drop zone under the pointer and show it on that row.
+  const handleDragMove = useCallback(
+    (event: DragMoveEvent) => {
+      if (dragItem?.type !== 'project') return
+      const { over, activatorEvent, delta } = event
+      const overData = over?.data.current as Record<string, unknown> | undefined
+      let target: ProjectDropTarget | null = null
+      if (over && overData?.type === 'project-root') {
+        target = { kind: 'root', dndId: String(over.id) }
+      } else if (over && overData?.type === 'project-category') {
+        target = { kind: 'category', dndId: String(over.id), categoryId: overData.categoryId as string }
+      } else if (over && overData?.type === 'project') {
+        const pointerY = (activatorEvent as PointerEvent).clientY + delta.y
+        const zone = dropZone(pointerY, over.rect, overData.hasVisibleChildren === true)
+        target = { kind: 'row', dndId: String(over.id), projectId: overData.projectId as number, zone }
+      }
+      if (target && !projectDropFor(queryClient, dragItem.node.id, target).move) target = null
+      setProjectDropTarget(target)
+    },
+    [dragItem, queryClient],
+  )
+
+  const handleDragCancel = useCallback(() => {
+    setProjectDropTarget(null)
+    setDragItem(null)
+  }, [])
+
+  const handleDragEnd = useCallback(
+    (event: DragEndEvent) => {
+      const { active, over } = event
+      // Where a dragged project was going; the drop line goes away however the drag ends.
+      const projectTarget = useProjectDropStore.getState().target
+      setProjectDropTarget(null)
+      if (!over || !dragItem) {
+        setDragItem(null)
+        return
+      }
+
+      const overData = over.data.current as Record<string, unknown> | undefined
+
+      if (dragItem.type === 'task') {
+        const task = dragItem.task
+        // Multi-drag: a grabbed row that's part of the selection carries the
+        // whole selection; otherwise just itself. Sidebar/section/parent drops
+        // apply to every dragged task.
+        const dragTasks = dragItem.tasks
+        const isMulti = dragTasks.length > 1
+        const clearIfMulti = () => {
+          if (isMulti) useSelectionStore.getState().clearSelection()
+        }
+
+        // A task sent somewhere else has no slot here to go back to: the overlay goes to the target.
+        const landOnTarget = () => {
+          dropLanding.current = { into: over.rect }
+        }
+        const leavesFor = (projectId: number) => dragTasks.some((t) => t.project_id !== projectId)
+
+        if (overData?.type === 'plan-drop') {
+          dropLanding.current = { into: null }
+          ;(overData.drop as (tasks: Task[]) => void)(dragTasks)
+          clearIfMulti()
+        } else if (overData?.type === 'project') {
+          const projectId = overData.projectId as number
+          if (leavesFor(projectId)) landOnTarget()
+          dragTasks.forEach((t) => {
+            if (projectId !== t.project_id) {
+              updateTask.mutate({ id: t.id, changes: { project_id: projectId }, original: t })
+            }
+          })
+          clearIfMulti()
+        } else if (overData?.type === 'label') {
+          const labelId = overData.labelId as number
+          const lacksLabel = (t: Task) => !(t.labels ?? []).some((l) => l.id === labelId)
+          if (dragTasks.some(lacksLabel)) dropLanding.current = { into: over.rect, keepsRow: true }
+          dragTasks.forEach((t) => {
+            if (lacksLabel(t)) {
+              addLabel.mutate({ taskId: t.id, labelId })
+            }
+          })
+        } else if (overData?.type === 'section') {
+          // Dropped on a section header — move every dragged task to that project.
+          const sectionProject = overData.project as Project
+          if (leavesFor(sectionProject.id)) landOnTarget()
+          dragTasks.forEach((t) => {
+            if (sectionProject.id !== t.project_id) {
+              updateTask.mutate({ id: t.id, changes: { project_id: sectionProject.id }, original: t })
+            }
+          })
+          clearIfMulti()
+        } else if (overData?.type === 'parent-project') {
+          // Dropped on the parent-project drop zone — move back to the parent.
+          const projectId = overData.projectId as number
+          if (leavesFor(projectId)) landOnTarget()
+          dragTasks.forEach((t) => {
+            if (projectId !== t.project_id) {
+              updateTask.mutate({ id: t.id, changes: { project_id: projectId }, original: t })
+            }
+          })
+          clearIfMulti()
+        } else if (overData?.type === 'section-bottom') {
+          // Task dropped at the end of a section
+          const sectionProjectId = overData.projectId as number
+          const { sectionContexts } = useReorderStore.getState()
+          const ctx = sectionContexts.get(sectionProjectId)
+          if (ctx) {
+            const otherTasks = ctx.tasks.filter((t) => t.id !== task.id)
+            // Anchor past the last task whose position means something in this order: the
+            // undated ones by default (dated-task positions are arbitrary), every one in Manual.
+            const anchors = anchorsFor(ctx.order)
+            let lastUndatedPos = 0
+            for (const t of otherTasks) {
+              if (anchors(t)) {
+                lastUndatedPos = Math.max(lastUndatedPos, t.position ?? 0)
+              }
+            }
+            const newPosition = lastUndatedPos + 2 ** 15
+
+            if (sectionProjectId !== task.project_id) {
+              landOnTarget()
+              const finalViewId = ctx.viewId
+              updateTask.mutate(
+                {
+                  id: task.id,
+                  changes: { project_id: sectionProjectId, position: newPosition },
+                  original: task,
+                  deferInvalidation: true,
+                },
+                {
+                  onSuccess: () => {
+                    reorderTask.mutate({
+                      taskId: task.id,
+                      viewId: finalViewId,
+                      position: newPosition,
+                    })
+                  },
+                }
+              )
+            } else if (
+              // Only where the order lets this row be dragged (cross-app semantics 12.4).
+              canReorderTask(ctx.order, task) &&
+              ctx.tasks.length > 0 &&
+              ctx.tasks[ctx.tasks.length - 1].id !== task.id
+            ) {
+              reorderTask.mutate({
+                taskId: task.id,
+                viewId: ctx.viewId,
+                position: newPosition,
+              })
+            }
+          }
+        } else if (overData?.sortable && active.id !== over.id) {
+          const { orderedTasks, viewId, order: listOrder, sectionContexts } = useReorderStore.getState()
+          const targetTaskId = Number(String(over.id).replace('task-', ''))
+
+          // Find source context (where the dragged task lives)
+          let sourceViewId: number | null = viewId
+          let sourceTasks: Task[] = orderedTasks
+          let sourceOrder: TaskOrderKey = listOrder
+
+          if (!viewId || !orderedTasks.some((t) => t.id === task.id)) {
+            sourceViewId = null
+            for (const [, ctx] of sectionContexts) {
+              if (ctx.tasks.some((t) => t.id === task.id)) {
+                sourceViewId = ctx.viewId
+                sourceTasks = ctx.tasks
+                sourceOrder = ctx.order
+                break
+              }
+            }
+          }
+
+          // Find destination context (where the target task lives)
+          let destViewId: number | null = viewId
+          let destTasks: Task[] = orderedTasks
+          let destProjectId: number | null = null
+          let destOrder: TaskOrderKey = listOrder
+
+          if (viewId && orderedTasks.some((t) => t.id === targetTaskId)) {
+            destProjectId = orderedTasks.find((t) => t.id === targetTaskId)?.project_id ?? null
+          } else {
+            destViewId = null
+            for (const [projId, ctx] of sectionContexts) {
+              if (ctx.tasks.some((t) => t.id === targetTaskId)) {
+                destViewId = ctx.viewId
+                destTasks = ctx.tasks
+                destProjectId = projId
+                destOrder = ctx.order
+                break
+              }
+            }
+          }
+
+          if (sourceViewId === destViewId && sourceViewId) {
+            // Same context — simple reorder, where the order allows it: every row in Manual,
+            // undated rows among themselves in "Due date, then manual", none otherwise (12.4).
+            const oldIndex = sourceTasks.findIndex((t) => t.id === task.id)
+            const newIndex = sourceTasks.findIndex((t) => t.id === targetTaskId)
+            const target = sourceTasks[newIndex]
+            if (oldIndex !== -1 && newIndex !== -1 && canReorderTask(sourceOrder, task) && canReorderTask(sourceOrder, target)) {
+              // Usually one position. Tasks that share a position (every task moved into a
+              // project starts at 0) cannot be told apart by a midpoint, so planMove then spreads them.
+              const move = planMove(sourceTasks, oldIndex, newIndex, anchorsFor(sourceOrder))
+              // The new order is rendered before the drag ends: the overlay then travels into the
+              // slot the row really has, and no row is drawn in its old place for a frame.
+              let applied: ReturnType<typeof applyReorderToCache> | undefined
+              commitSync(() => {
+                applied = applyReorderToCache(queryClient, { taskId: task.id, position: move.position, renumbered: move.renumbered })
+              })
+              reorderTask.mutate({
+                taskId: task.id,
+                viewId: sourceViewId,
+                position: move.position,
+                renumbered: move.renumbered,
+                applied,
+              })
+            }
+          } else if (destViewId && destProjectId && destProjectId !== task.project_id) {
+            // Cross-section — move task to destination project + position.
+            // Pass the new position to updateTask so the optimistic update lands
+            // the task at the right slot in the destination on the very first
+            // render. deferInvalidation tells useUpdateTask to skip refetching
+            // view-tasks/section-tasks; the trailing reorderTask owns that.
+            const targetIndex = destTasks.findIndex((t) => t.id === targetTaskId)
+            const insertPosition = slotPosition(destTasks, targetIndex, anchorsFor(destOrder)).position
+
+            landOnTarget()
+            const finalDestViewId = destViewId
+            updateTask.mutate(
+              {
+                id: task.id,
+                changes: { project_id: destProjectId, position: insertPosition },
+                original: task,
+                deferInvalidation: true,
+              },
+              {
+                onSuccess: () => {
+                  reorderTask.mutate({ taskId: task.id, viewId: finalDestViewId, position: insertPosition })
+                },
+              }
+            )
+          }
+        }
+      } else if (dragItem.type === 'section') {
+        if (overData?.type === 'section' && active.id !== over.id) {
+          const siblings = dragItem.siblings
+          const oldIndex = siblings.findIndex((s) => s.id === dragItem.project.id)
+          const overProject = overData.project as Project
+          const newIndex = siblings.findIndex((s) => s.id === overProject.id)
+          if (oldIndex !== -1 && newIndex !== -1) {
+            const plan = planSiblingMove(siblings, oldIndex, newIndex)
+            reorderProject.mutate({ id: dragItem.project.id, position: plan.position, renumbered: plan.renumbered })
+          }
+        }
+      } else if (dragItem.type === 'project') {
+        const target = projectTarget
+        if (target) {
+          const { projects, move } = projectDropFor(queryClient, dragItem.node.id, target)
+          const project = projects.find((p) => p.id === dragItem.node.id)
+          if (project && move) commitProjectMove(queryClient, projectActionsApi.move, project, move)
+        }
+      }
+      // custom-list reorder is handled by CustomListNav's useDndMonitor
+
+      setDragItem(null)
+    },
+    [dragItem, updateTask, reorderTask, reorderProject, addLabel, queryClient, projectActionsApi]
+  )
+
+  useEffect(() => {
+    api.getConfig().then(async (config) => {
+      const t = ((config?.theme as ThemeOption) || 'system')
+      themeRef.current = t
+      applyTheme(t)
+
+      if (typeof config?.sidebar_width === 'number') {
+        setSidebarWidth(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, config.sidebar_width)))
+      }
+
+      if (!config || !config.vikunja_url) {
+        setAppState('setup')
+        return
+      }
+
+      const authResult = await api.checkAuth()
+      if (authResult.status === 'authenticated') {
+        setAppState('ready')
+      } else if (authResult.status === 'reauth-needed') {
+        setReauthInfo({
+          authMethod: authResult.authMethod,
+          vikunjaUrl: authResult.vikunjaUrl,
+          lastUsername: authResult.lastUsername,
+        })
+        setAppState('reauth')
+      } else {
+        setAppState('setup')
+      }
+    })
+  }, [])
+
+  // Re-apply theme when OS preference changes (only matters for 'system' theme)
+  useEffect(() => {
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const handler = () => {
+      if (themeRef.current === 'system') {
+        applyTheme('system')
+      }
+    }
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
+
+  // Invalidate query cache when Quick Entry/View mutates tasks, or a replay applied queued changes.
+  // Every task-derived key goes, section tasks included (D-FRESH-1).
+  useEffect(() => {
+    const cleanup = api.onTasksChanged(() => {
+      refreshTasks(queryClient)
+    })
+    return cleanup
+  }, [queryClient])
+
+  // Handle navigate events from main process (e.g. Cmd+, for Settings)
+  useEffect(() => {
+    return api.onNavigate((path) => {
+      navigate({ to: path })
+    })
+  }, [navigate])
+
+  // Saved filters imported as lists (first connect or Settings, cross-app semantics 3.7): say so,
+  // with Open for the first one.
+  useEffect(() => {
+    return api.onSavedFiltersImported(({ count, list_id: listId }) => {
+      if (count < 1) return
+      const message = count === 1 ? 'Imported 1 saved filter as a list' : `Imported ${count} saved filters as lists`
+      toast.success(message, {
+        key: 'saved-filters-imported',
+        ...(listId ? { action: { label: 'Open', onAction: () => navigate({ to: '/list/$listId', params: { listId } }) } } : {}),
+      })
+    })
+  }, [navigate])
+
+  // A clicked task reminder or Quick View's "open in app": show that task in this window.
+  useEffect(() => {
+    return api.onNavigateToTask((taskId) => {
+      void openTaskInApp(
+        {
+          fetchTask: (id) => api.fetchTaskById(id),
+          inboxProjectId: async () => (await api.getConfig())?.inbox_project_id ?? 0,
+          navigate: (route) => navigate(route),
+          notify: (message) => toast.error(message),
+        },
+        taskId,
+      )
+    })
+  }, [navigate])
+
+  // Print the current view when the File menu / Ctrl+P fires. Views register
+  // their on-screen tasks via usePrintable; no payload (Settings, Setup)
+  // means nothing to print.
+  useEffect(() => {
+    return api.onPrintView(async () => {
+      try {
+        const payload = usePrintStore.getState().payload
+        if (!payload) return
+        // The logo is a 90 KB data URL used only here: loaded when something is printed.
+        const { VICU_LOGO_DATA_URL } = await import('@/assets/vicu-logo')
+        const html = buildPrintHtml(payload, {
+          sanitize: sanitizeTaskHtml,
+          logoDataUrl: VICU_LOGO_DATA_URL,
+        })
+        const result = await api.printHtml(html)
+        if (!result.success) {
+          console.error('Print failed:', result.error)
+        }
+      } catch (err) {
+        console.error('Print failed:', err)
+      }
+    })
+  }, [])
+
+  // "Sign in" in the sync panel: the queue stopped on an auth problem the local token state does not
+  // show (the server rejected a token that looks valid), so show the sign-in screen regardless.
+  const reauthRequestId = useUIStore((s) => s.reauthRequestId)
+  useEffect(() => {
+    if (reauthRequestId === 0) return
+    void api.getConfig().then((config) => {
+      if (!config?.vikunja_url) {
+        setAppState('setup')
+      } else if (config.auth_method === 'oidc' || config.auth_method === 'password') {
+        setReauthInfo({
+          authMethod: config.auth_method,
+          vikunjaUrl: config.vikunja_url,
+          lastUsername: config.last_username,
+        })
+        setAppState('reauth')
+      } else {
+        // An API token that the server refuses has to be replaced on the setup screen.
+        setAppState('setup')
+      }
+    })
+  }, [reauthRequestId])
+
+  // Listen for auth-required events (runtime token expiry)
+  useEffect(() => {
+    return api.onAuthRequired(async () => {
+      if (appState === 'reauth' || appState === 'setup') return
+      const authResult = await api.checkAuth()
+      if (authResult.status === 'reauth-needed') {
+        setReauthInfo({
+          authMethod: authResult.authMethod,
+          vikunjaUrl: authResult.vikunjaUrl,
+          lastUsername: authResult.lastUsername,
+        })
+        setAppState('reauth')
+      }
+    })
+  }, [appState])
+
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      dragging.current = true
+      startX.current = e.clientX
+      startWidth.current = sidebarWidth
+      let latestWidth = sidebarWidth
+
+      const handleMouseMove = (ev: MouseEvent) => {
+        if (!dragging.current) return
+        const delta = ev.clientX - startX.current
+        latestWidth = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth.current + delta))
+        // Mutate the element directly during the drag — committing to the
+        // store per mousemove re-renders the entire app tree per pixel.
+        if (sidebarRef.current) sidebarRef.current.style.width = `${latestWidth}px`
+      }
+
+      const handleMouseUp = () => {
+        dragging.current = false
+        document.removeEventListener('mousemove', handleMouseMove)
+        document.removeEventListener('mouseup', handleMouseUp)
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+        setSidebarWidth(latestWidth)
+        void api.saveConfigPatch({ sidebar_width: latestWidth })
+      }
+
+      document.body.style.cursor = 'col-resize'
+      document.body.style.userSelect = 'none'
+      document.addEventListener('mousemove', handleMouseMove)
+      document.addEventListener('mouseup', handleMouseUp)
+    },
+    [sidebarWidth, setSidebarWidth]
+  )
+
+  if (appState === 'loading') {
+    return <div className="flex h-screen w-screen items-center justify-center bg-[var(--bg-primary)]" />
+  }
+
+  if (appState === 'reauth' && reauthInfo) {
+    return (
+      <Suspense fallback={<div className="flex h-screen w-screen items-center justify-center bg-[var(--bg-primary)]" />}>
+        <ReauthView
+          authMethod={reauthInfo.authMethod}
+          vikunjaUrl={reauthInfo.vikunjaUrl}
+          lastUsername={reauthInfo.lastUsername}
+          onSuccess={() => {
+            setReauthInfo(null)
+            setAppState('ready')
+          }}
+          onSwitchAccount={() => {
+            setReauthInfo(null)
+            setAppState('setup')
+          }}
+        />
+      </Suspense>
+    )
+  }
+
+  if (appState === 'setup') {
+    return (
+      <Suspense fallback={<div className="flex h-screen w-screen items-center justify-center bg-[var(--bg-primary)]" />}>
+        <SetupView onComplete={() => setAppState('ready')} />
+      </Suspense>
+    )
+  }
+
+  return (
+    <ProjectActionsContext.Provider value={projectActionsApi}>
+    <ProjectAccessProvider>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={collisionDetection}
+      onDragStart={handleDragStart}
+      onDragMove={handleDragMove}
+      onDragEnd={handleDragEnd}
+      onDragCancel={handleDragCancel}
+    >
+      {/* With Mica behind the window the root stays clear so the translucent sidebar shows it; the content column and the splitter carry the page colour themselves. */}
+      <div className={`relative flex h-screen w-screen overflow-hidden${window.api.windowMaterial === 'mica' ? '' : ' bg-[var(--bg-primary)]'}`}>
+        {/* Window drag region overlay */}
+        <header
+          className="absolute inset-x-0 top-0 z-30 flex h-8"
+          style={{
+            WebkitAppRegion: 'drag',
+            ...(window.api.platform === 'darwin' ? { paddingLeft: '80px' } : {}),
+          } as React.CSSProperties}
+        >
+          <div className="flex-1" />
+          <WindowControls />
+        </header>
+
+        {/* Sidebar — bg extends behind drag region */}
+        <aside
+          aria-label="Sidebar"
+          ref={sidebarRef}
+          className="flex shrink-0 flex-col overflow-hidden border-r border-[var(--border-color)] bg-[var(--bg-sidebar)]"
+          style={{ width: sidebarWidth }}
+        >
+          <div className="h-8 shrink-0" />
+          <div className="flex-1 overflow-hidden">
+            <Sidebar />
+          </div>
+        </aside>
+
+        <div
+          className="w-1 shrink-0 cursor-col-resize bg-[var(--bg-primary)] transition-colors hover:bg-accent-blue/20"
+          onMouseDown={handleMouseDown}
+          role="separator"
+          aria-orientation="vertical"
+        />
+
+        <div className="flex flex-1 flex-col overflow-hidden bg-[var(--bg-primary)]">
+          <div className="h-8 shrink-0" />
+          <UpdateBanner />
+          <ContentArea>
+            <Outlet />
+          </ContentArea>
+        </div>
+        <CommentsPaneHost />
+        <AskHost />
+        <BadgeSync />
+        <CompletionSoundSync />
+        <GlobalConfirm />
+        <ProjectActionsHost />
+        <TemplateEditHost />
+        <ToastHost />
+        <VoiceHost />
+        <DictationHost />
+        <MakeTasksDialog />
+        <AiHost />
+        <CommandPalette />
+      </div>
+
+      <DragOverlay dropAnimation={dropAnimation} modifiers={DRAG_OVERLAY_MODIFIERS}>
+        {dragItem?.type === 'task' && (
+          <TaskDragOverlay task={dragItem.task} count={dragItem.tasks.length} />
+        )}
+        {dragItem?.type === 'project' && (
+          <ProjectDragOverlay title={dragItem.node.title} hexColor={dragItem.node.hex_color} />
+        )}
+        {dragItem?.type === 'section' && (
+          <SectionDragOverlay title={dragItem.project.title} />
+        )}
+        {dragItem?.type === 'custom-list' && (
+          <CustomListDragOverlay name={dragItem.list.name} />
+        )}
+      </DragOverlay>
+    </DndContext>
+    </ProjectAccessProvider>
+    </ProjectActionsContext.Provider>
+  )
+}
