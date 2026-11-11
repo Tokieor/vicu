@@ -775,5 +775,12 @@
   "Off (default): closing the window quits Vicu.": "关闭时（默认）：点击关闭按钮直接退出 Vicu。",
   "Hide Vicu": "隐藏 Vicu",
   "Quit Vicu": "退出 Vicu",
-  "Vicu is still running. Click the tray icon to reopen it.": "Vicu 仍在后台运行，点击托盘图标可重新打开。"
+  "Vicu is still running. Click the tray icon to reopen it.": "Vicu 仍在后台运行，点击托盘图标可重新打开。",
+
+  "Navigation": "导航",
+  "Task Actions": "任务操作",
+  "Scheduling": "时间安排",
+  "Checking voice input…": "正在检查语音输入…",
+  "macOS speech recognition": "macOS 语音识别",
+  "Uses {0}. Your language is recognized by Apple's servers.": "使用 {0}。你的语言由 Apple 的服务器识别。"
 }

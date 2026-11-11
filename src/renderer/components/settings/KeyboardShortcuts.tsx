@@ -1,3 +1,5 @@
+import { t } from '@/lib/i18n'
+
 const isMac = window.api.platform === 'darwin'
 const mod = isMac ? '\u2318' : 'Ctrl'
 
@@ -57,7 +59,7 @@ export function KeyboardShortcuts() {
           className="rounded-card border border-[var(--border-color)] bg-[var(--bg-primary)] p-5"
         >
           <h2 className="mb-3 text-sm font-semibold text-[var(--text-primary)]">
-            {section.category}
+            {t(section.category)}
           </h2>
           <div className="space-y-2">
             {section.items.map((item, i) => (
@@ -66,7 +68,7 @@ export function KeyboardShortcuts() {
                 className="flex items-center justify-between py-1"
               >
                 <span className="text-xs text-[var(--text-secondary)]">
-                  {item.description}
+                  {t(item.description)}
                 </span>
                 <div className="flex items-center gap-1">
                   {item.keys.map((key, j) => (

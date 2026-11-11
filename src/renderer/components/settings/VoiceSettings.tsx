@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { t } from '@/lib/i18n'
 import { HotkeyRecorder } from './HotkeyRecorder'
 import type { AppConfig } from '@/lib/vikunja-types'
 import { voiceHotkeyConflict } from '@/lib/voice/shortcut-conflicts'
@@ -12,12 +13,12 @@ interface VoiceSettingsProps {
 }
 
 function engineText(availability: VoiceAvailability | null): string {
-  if (!availability) return 'Checking voice input…'
-  if (!availability.available) return availability.reason ?? 'Voice input is not available on this system.'
-  const engine = availability.engine === 'macos-speech' ? 'macOS speech recognition' : 'Windows speech recognition'
+  if (!availability) return t('Checking voice input…')
+  if (!availability.available) return availability.reason ?? t('Voice input is not available on this system.')
+  const engine = availability.engine === 'macos-speech' ? t('macOS speech recognition') : t('Windows speech recognition')
   return availability.onDevice
-    ? `Uses ${engine}, on this computer: what you say is not sent anywhere.`
-    : `Uses ${engine}. Your language is recognized by Apple's servers.`
+    ? t('Uses {0}, on this computer: what you say is not sent anywhere.', engine)
+    : t("Uses {0}. Your language is recognized by Apple's servers.", engine)
 }
 
 /** Settings, Keyboard Shortcuts: the in-app voice shortcut (docs/voice-input.md). */
