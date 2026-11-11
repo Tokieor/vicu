@@ -8,6 +8,7 @@ import { useProjects } from '@/hooks/use-projects'
 import { setProjectShowIcon, useProjectsWithoutIcon } from '@/hooks/use-project-icons'
 import { useCreateProject, useUpdateProject } from '@/hooks/use-task-mutations'
 import { cn } from '@/lib/cn'
+import { t } from '@/lib/i18n'
 import { childrenOf, descendantIds, effectiveParent, placeAt, TOP_LEVEL } from '@/lib/project-moves'
 import type { Project } from '@/lib/vikunja-types'
 
@@ -97,7 +98,8 @@ export function ProjectDialog({ project, initialParentId = TOP_LEVEL, returnFocu
     }
   }
 
-  const heading = project ? 'Edit Project' : parent ? 'New Subproject' : 'New Project'
+  // 标题是运行时变量，编译期插桩碰不到；三种情形都显式走 t()。
+  const heading = t(project ? 'Edit Project' : parent ? 'New Subproject' : 'New Project')
 
   return (
     <Dialog open onClose={onClose} labelledBy={titleId} returnFocusTo={returnFocusTo} className="w-[380px]">
@@ -222,7 +224,7 @@ export function ProjectDialog({ project, initialParentId = TOP_LEVEL, returnFocu
         <div className="flex justify-end gap-2 border-t border-[var(--border-color)] px-5 py-3">
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
           <Button variant="primary" type="submit" disabled={!title.trim() || pending}>
-            {pending ? 'Saving…' : project ? 'Save' : 'Create'}
+            {pending ? t('Saving…') : project ? t('Save') : t('Create')}
           </Button>
         </div>
       </form>

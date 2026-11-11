@@ -5,6 +5,7 @@ import { useAppConfig } from '@/hooks/use-app-config'
 import { useSharedProjectActions } from '@/hooks/use-project-actions'
 import { useProjectCategoryActions } from '@/hooks/use-project-categories'
 import { parseReviewFooter } from '@/lib/review-metadata'
+import { t } from '@/lib/i18n'
 import { projectActions, useProjectActionsStore, type ProjectDialogRequest } from '@/stores/project-actions-store'
 import type { Project } from '@/lib/vikunja-types'
 import { ProjectDialog } from './ProjectDialog'
@@ -116,7 +117,7 @@ function CategoryNameDialog({
           save()
         }}
       >
-        <h2 id={titleId} className="text-sm font-semibold text-[var(--text-primary)]">{title}</h2>
+        <h2 id={titleId} className="text-sm font-semibold text-[var(--text-primary)]">{t(title)}</h2>
         <div>
           <label htmlFor={inputId} className="mb-1 block text-xs text-[var(--text-secondary)]">Name</label>
           <input
@@ -135,7 +136,7 @@ function CategoryNameDialog({
         </div>
         <div className="flex justify-end gap-2">
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" type="submit">{confirmLabel}</Button>
+          <Button variant="primary" type="submit">{t(confirmLabel)}</Button>
         </div>
       </form>
     </Dialog>

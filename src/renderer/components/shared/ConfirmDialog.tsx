@@ -1,5 +1,6 @@
 import { useId } from 'react'
 import { cn } from '@/lib/cn'
+import { t } from '@/lib/i18n'
 import { Dialog } from '@/components/overlay/Dialog'
 
 interface ConfirmDialogProps {
@@ -41,7 +42,7 @@ export function ConfirmDialog({
       className="w-[calc(100%-2rem)] max-w-sm"
     >
       <div className="p-5">
-        <p id={messageId} className="mb-4 whitespace-pre-line text-sm text-[var(--text-primary)]">{message}</p>
+        <p id={messageId} className="mb-4 whitespace-pre-line text-sm text-[var(--text-primary)]">{t(message)}</p>
         <div className="flex justify-end gap-2">
           <button
             data-autofocus
@@ -65,7 +66,7 @@ export function ConfirmDialog({
                   : 'border border-[var(--border-color)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)]'
               )}
             >
-              {secondaryLabel}
+              {t(secondaryLabel)}
             </button>
           )}
           <button
@@ -78,7 +79,7 @@ export function ConfirmDialog({
                 : 'bg-accent-fill text-on-accent transition-colors hover:bg-accent-fill/90'
             )}
           >
-            {confirmLabel}
+            {t(confirmLabel)}
           </button>
         </div>
       </div>

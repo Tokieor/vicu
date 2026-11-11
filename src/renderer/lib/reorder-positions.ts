@@ -12,6 +12,7 @@
 // new order.
 
 import { NULL_DATE } from './constants'
+import { t } from './i18n'
 import type { Task } from './vikunja-types'
 import { canReorderTask, orderAllowsReorder, parseTaskOrder, TASK_ORDER_LABELS } from '../../shared/task-order'
 
@@ -151,11 +152,11 @@ export function taskStepRefusal(
       return null
     case 'sorted':
       return {
-        message: `Tasks here are sorted by ${TASK_ORDER_LABELS[parseTaskOrder(order)]}. Choose Manual in Sort tasks to move them.`,
+        message: t('Tasks here are sorted by {0}. Choose Manual in Sort tasks to move them.', t(TASK_ORDER_LABELS[parseTaskOrder(order)])),
         toast: true,
       }
     case 'dated':
-      return { message: 'Tasks with a due date stay in date order. Choose Manual in Sort tasks to move them.', toast: true }
+      return { message: t('Tasks with a due date stay in date order. Choose Manual in Sort tasks to move them.'), toast: true }
     case 'edge':
       return {
         message: datedEdge

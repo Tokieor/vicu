@@ -17,6 +17,7 @@ import { notificationCategory, notificationFilters, overdueDays } from './notifi
 import { addLocalDays, startOfLocalDay, toLocalDate } from '../shared/due-dates'
 import { isSharedRoutine, parseRoutineEnvelope, routineOccurrenceKey, scheduledDateOn, type RoutinePayload } from '../shared/routines'
 import { isPlannerEnabled, isRoutinesEnabled } from '../shared/config-types'
+import { getLocale, t } from '../shared/i18n'
 
 const NULL_DATE = '0001-01-01T00:00:00Z'
 
@@ -183,8 +184,8 @@ export function refreshTaskRemindersOnFocus(): void {
 export function sendTestNotification(): void {
   const config = loadConfig()
   const notification = new Notification({
-    title: 'Vicu — Test Notification',
-    body: 'Notifications are working! You will receive task reminders at your scheduled times.',
+    title: t('Vicu — Test Notification'),
+    body: t('Notifications are working! You will receive task reminders at your scheduled times.'),
     silent: !(config?.notifications_sound ?? true),
     timeoutType: config?.notifications_persistent ? 'never' : 'default',
     icon: getIcon(),
@@ -213,8 +214,8 @@ function schedulePlannerNudge(): void {
     const current = loadConfig()
     if (current?.notifications_enabled && isPlannerEnabled(current) && current.planner_nudge === time) {
       const notification = new Notification({
-        title: 'Plan tomorrow',
-        body: 'Set up tomorrow in Plan my day.',
+        title: t('Plan tomorrow'),
+        body: t('Set up tomorrow in Plan my day.'),
         silent: !current.notifications_sound,
         icon: getIcon(),
       })
@@ -323,8 +324,8 @@ async function fireRoutineReminder(
   if (!config.notifications_enabled || !isRoutinesEnabled(config)) return
   const definition = payload.definition
   const notification = new Notification({
-    title: followUp ? `Still pending: ${definition.name}` : definition.name,
-    body: followUp ? 'A gentle follow-up' : 'Routine reminder',
+    title: followUp ? t('Still pending: {0}', definition.name) : definition.name,
+    body: followUp ? t('A gentle follow-up') : t('Routine reminder'),
     silent: !(config.notifications_task_reminder_sound ?? config.notifications_sound),
     timeoutType: (config.notifications_task_reminder_persistent ?? config.notifications_persistent) ? 'never' : 'default',
     icon: getIcon(),
@@ -349,8 +350,8 @@ function fireTaskReminder(taskId: number, title: string, configSnapshot: AppConf
   if (!config.notifications_enabled) return
 
   const notification = new Notification({
-    title: `Reminder: ${title}`,
-    body: 'Task reminder',
+    title: t('Reminder: {0}', title),
+    body: t('Task reminder'),
     silent: !(config.notifications_task_reminder_sound ?? config.notifications_sound),
     timeoutType: (config.notifications_task_reminder_persistent ?? config.notifications_persistent) ? 'never' : 'default',
     icon: getIcon(),
@@ -593,13 +594,13 @@ function showSummaryNotification(tasks: NotificationTasks, config: AppConfig): v
   const total = overdueCount + dueTodayCount + upcomingCount
 
   const parts: string[] = []
-  if (dueTodayCount > 0) parts.push(`${dueTodayCount} due today`)
-  if (overdueCount > 0) parts.push(`${overdueCount} overdue`)
-  if (upcomingCount > 0) parts.push(`${upcomingCount} due tomorrow`)
+  if (dueTodayCount > 0) parts.push(t('{0} due today', dueTodayCount))
+  if (overdueCount > 0) parts.push(t('{0} overdue', overdueCount))
+  if (upcomingCount > 0) parts.push(t('{0} due tomorrow', upcomingCount))
 
   const notification = new Notification({
-    title: `Vicu — ${total} task${total === 1 ? '' : 's'} need attention`,
-    body: parts.join(', '),
+    title: t('Vicu — {0} task{1} need attention', total, total === 1 ? '' : 's'),
+    body: parts.join(getLocale() === 'zh' ? '、' : ', '),
     silent: !config.notifications_sound,
     timeoutType: config.notifications_persistent ? 'never' : 'default',
     icon: getIcon(),
@@ -616,15 +617,15 @@ function showSummaryNotification(tasks: NotificationTasks, config: AppConfig): v
 // --- Helpers ---
 
 function formatDueDate(dueDateStr: string, category: 'overdue' | 'due_today' | 'upcoming'): string {
-  if (category === 'due_today') return 'Due today'
-  if (category === 'upcoming') return 'Due tomorrow'
+  if (category === 'due_today') return t('Due today')
+  if (category === 'upcoming') return t('Due tomorrow')
 
   // Overdue: whole calendar days since the due date's local day
   const diffDays = overdueDays(dueDateStr)
 
-  if (diffDays <= 0) return 'Due today'
-  if (diffDays === 1) return 'Overdue by 1 day'
-  return `Overdue by ${diffDays} days`
+  if (diffDays <= 0) return t('Due today')
+  if (diffDays === 1) return t('Overdue by 1 day')
+  return t('Overdue by {0} days', diffDays)
 }
 
 function getIcon(): Electron.NativeImage | undefined {

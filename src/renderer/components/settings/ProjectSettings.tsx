@@ -20,6 +20,7 @@ import { useProjectCategories } from '@/hooks/use-project-categories'
 import { useTaskOrderSettings } from '@/hooks/use-task-order'
 import { cn } from '@/lib/cn'
 import { normalizeHex } from '@/lib/constants'
+import { t } from '@/lib/i18n'
 import { groupsWithInbox } from '@/lib/project-groups'
 import { projectActions, useProjectActionsStore } from '@/stores/project-actions-store'
 import { useCategoryDropActive, useRootDropActive, useRowDropZone } from '@/stores/project-drop-store'
@@ -482,7 +483,7 @@ function TaskOrderSetting() {
         className="w-full rounded-control border border-[var(--border-color)] bg-[var(--bg-secondary)] px-3 py-2 text-sm text-[var(--text-primary)]"
       >
         {TASK_ORDER_KEYS.map((key) => (
-          <option key={key} value={key}>{TASK_ORDER_LABELS[key]}</option>
+          <option key={key} value={key}>{t(TASK_ORDER_LABELS[key])}</option>
         ))}
       </select>
       <p className="mt-1 text-xs text-[var(--text-secondary)]">

@@ -46,6 +46,14 @@ const TEXT_ATTRIBUTES = new Set([
   'emptyText',
   'emptyTitle',
   'emptySubtitle',
+  // 确认弹窗/表单按钮文案：这些属性最终会作为按钮文字渲染，
+  // 但调用方常常传字面量，编译期不处理就会漏翻。
+  'confirmLabel',
+  'secondaryLabel',
+  'cancelLabel',
+  'submitLabel',
+  'okLabel',
+  'actionLabel',
 ])
 
 // 对象字面量里承载界面文案的键（{ label: 'Today' } 这类内联选项表）
@@ -169,8 +177,9 @@ export function i18nPlugin(options = {}) {
           needsImport = true
         },
 
-        // {cond && 'Cancel'}、{a ? 'Yes' : 'No'}、{'Plain'}
-        // 这类写在表达式里的文案不会成为 JSXText，单独处理。
+        // {cond && 'Cancel'}、{a ? 'Yes' : 'No'}、{'Plain'}、{a ? 'A' : b ? 'B' : 'C'}
+        // 这类写在表达式里的文案不会成为 JSXText，单独处理。嵌套三元要递归到每一层分支，
+        // 否则 {pending ? 'Saving…' : project ? 'Save' : 'Create'} 里只有最外层会被翻。
         JSXExpressionContainer(path) {
           const wrapLiteral = (literalPath) => {
             if (!literalPath.isStringLiteral()) return
@@ -181,6 +190,22 @@ export function i18nPlugin(options = {}) {
             needsImport = true
           }
 
+          // 只沿着「条件/逻辑表达式」向下走，不进入任意表达式，避免碰到业务数据拼接。
+          const wrapBranch = (branch) => {
+            if (!branch) return
+            if (branch.isStringLiteral()) {
+              wrapLiteral(branch)
+            } else if (branch.isConditionalExpression()) {
+              wrapBranch(branch.get('consequent'))
+              wrapBranch(branch.get('alternate'))
+            } else if (
+              branch.isLogicalExpression() &&
+              (branch.node.operator === '&&' || branch.node.operator === '||')
+            ) {
+              wrapBranch(branch.get('right'))
+            }
+          }
+
           const expression = path.get('expression')
           if (expression.isStringLiteral()) {
             wrapLiteral(expression)
@@ -188,10 +213,9 @@ export function i18nPlugin(options = {}) {
             expression.isLogicalExpression() &&
             (expression.node.operator === '&&' || expression.node.operator === '||')
           ) {
-            wrapLiteral(expression.get('right'))
+            wrapBranch(expression)
           } else if (expression.isConditionalExpression()) {
-            wrapLiteral(expression.get('consequent'))
-            wrapLiteral(expression.get('alternate'))
+            wrapBranch(expression)
           }
         },
 

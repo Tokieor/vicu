@@ -1,6 +1,7 @@
 // Routine rules live in src/shared/routines.ts (shared with the main-process reminders); this
 // file adds the renderer-only pieces: device identity, view models and display helpers.
 import { toLocalDate } from '../../shared/due-dates'
+import { getLocale, t } from '../../shared/i18n'
 import {
   isSharedRoutine,
   routineOccurrenceKey,
@@ -136,14 +137,22 @@ export function statusRecord(
   }
 }
 
+// 星期缩写本身就是 i18n 的 key：英文模式 t() 原样返回，中文模式取字典译文。
+const WEEKDAY_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+
 export function scheduleSummary(definition: RoutineDefinition): string {
   if (definition.schedule.type === 'after_completion') {
     const days = definition.schedule.intervalDays
-    return `${days} day${days === 1 ? '' : 's'} after completion`
+    return days === 1
+      ? t('{0} day after completion', days)
+      : t('{0} days after completion', days)
   }
   const { weekdays, weekInterval } = definition.schedule
-  if (weekdays.length === 0 && weekInterval === 1) return 'Every day'
-  const names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
-  const days = weekdays.length === 0 ? 'every day' : weekdays.map((day) => names[day - 1]).join(', ')
-  return weekInterval === 1 ? days : `${days}, every ${weekInterval} weeks`
+  if (weekdays.length === 0 && weekInterval === 1) return t('Every day')
+  // 中文用顿号，英文沿用逗号，避免「周一, 周二」这种夹生写法。
+  const separator = getLocale() === 'zh' ? '、' : ', '
+  const days = weekdays.length === 0
+    ? t('every day')
+    : weekdays.map((day) => t(WEEKDAY_SHORT[day - 1] ?? '')).join(separator)
+  return weekInterval === 1 ? days : t('{0}, every {1} weeks', days, weekInterval)
 }

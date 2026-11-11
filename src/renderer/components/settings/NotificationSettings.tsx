@@ -4,6 +4,7 @@ import { Button } from '@/components/shared/Button'
 import { useState } from 'react'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
+import { t } from '@/lib/i18n'
 import type { AppConfig } from '@/lib/vikunja-types'
 import { useLocationReminders } from '@/hooks/use-location-reminders'
 import { MapPin } from 'lucide-react'
@@ -209,7 +210,7 @@ export function NotificationSettings({ config, onChange }: NotificationSettingsP
               >
                 {OFFSET_OPTIONS.map((opt) => (
                   <option key={opt.value} value={opt.value}>
-                    {opt.label}
+                    {t(opt.label)}
                   </option>
                 ))}
               </select>

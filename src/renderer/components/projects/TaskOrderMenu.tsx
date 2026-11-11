@@ -2,6 +2,7 @@ import type { RefObject } from 'react'
 import { Menu, MenuRadioItem, MenuSeparator } from '@/components/overlay/Menu'
 import type { PopoverCloseReason } from '@/components/overlay/Popover'
 import { useTaskOrderResolver, useTaskOrderSettings } from '@/hooks/use-task-order'
+import { t } from '@/lib/i18n'
 import type { Project } from '@/lib/vikunja-types'
 import { TASK_ORDER_KEYS, TASK_ORDER_LABELS } from '../../../shared/task-order'
 
@@ -23,14 +24,14 @@ export function TaskOrderMenu({ project, anchorRef, placement = 'right-start', o
   // What "Default" means here: the parent's order, else the global one.
   const inherited = resolve(project.parent_project_id > 0 ? project.parent_project_id : undefined)
   return (
-    <Menu anchorRef={anchorRef} placement={placement} label="Sort tasks" onClose={onClose}>
+    <Menu anchorRef={anchorRef} placement={placement} label={t('Sort tasks')} onClose={onClose}>
       <MenuRadioItem checked={projectOwn === null} onSelect={() => setProject(null)}>
-        {`Default (${TASK_ORDER_LABELS[inherited]})`}
+        {t('Default ({0})', t(TASK_ORDER_LABELS[inherited]))}
       </MenuRadioItem>
       <MenuSeparator />
       {TASK_ORDER_KEYS.map((key) => (
         <MenuRadioItem key={key} checked={projectOwn === key} onSelect={() => setProject(key)}>
-          {TASK_ORDER_LABELS[key]}
+          {t(TASK_ORDER_LABELS[key])}
         </MenuRadioItem>
       ))}
     </Menu>

@@ -29,6 +29,7 @@ import { useSharedProjectActions } from '@/hooks/use-project-actions'
 import { useProjectCategories, useProjectCategoryActions } from '@/hooks/use-project-categories'
 import { useSidebarCollapsed } from '@/hooks/use-sidebar-collapsed'
 import { normalizeHex } from '@/lib/constants'
+import { t } from '@/lib/i18n'
 import { childrenOf, descendantIds, effectiveParent, placeAt, TOP_LEVEL } from '@/lib/project-moves'
 import { parseReviewFooter } from '@/lib/review-metadata'
 import { effectivePermission } from '@/lib/collaboration'
@@ -83,7 +84,7 @@ function ParentPicker({ anchorRef, project, projects, inboxId, onSelect, onClose
   return (
     <Popover anchorRef={anchorRef} onClose={onClose} placement="right-start" role="listbox" label="Move to" className="w-60 py-1">
       <div className="max-h-72 overflow-y-auto">
-        {option('top', 'Top level', TOP_LEVEL, 0)}
+        {option('top', t('Top level'), TOP_LEVEL, 0)}
         {options.map(({ project: item, depth }) =>
           option(String(item.id), item.title, item.id, depth + 1, normalizeHex(item.hex_color)),
         )}
@@ -130,7 +131,7 @@ function CategoryPicker({ anchorRef, categories, current, onSelect, onNew, onClo
     <Popover anchorRef={anchorRef} onClose={onClose} placement="right-start" role="listbox" label="Move to category" className="w-56 py-1">
       <div className="max-h-72 overflow-y-auto">
         {categories.map((category) => option(category.id, category.name, category.id))}
-        {option('none', 'No category', null)}
+        {option('none', t('No category'), null)}
         <button
           type="button"
           role="option"

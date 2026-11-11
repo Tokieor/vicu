@@ -46,6 +46,7 @@ const ATTRS = new Set([
   'placeholder', 'title', 'aria-label', 'aria-placeholder', 'aria-description', 'alt',
   'label', 'unsetLabel', 'unsetName', 'heading', 'subtitle', 'description',
   'emptyText', 'emptyTitle', 'emptySubtitle',
+  'confirmLabel', 'secondaryLabel', 'cancelLabel', 'submitLabel', 'okLabel', 'actionLabel',
 ])
 
 for (const file of walk(RENDERER)) {
