@@ -1,4 +1,5 @@
-import { BrowserWindow, nativeTheme, screen, session } from 'electron'
+import { existsSync } from 'fs'
+import { app, BrowserWindow, nativeImage, nativeTheme, screen, session, type NativeImage } from 'electron'
 import { release } from 'os'
 import { join } from 'path'
 import type { AppConfig } from './config'
@@ -15,6 +16,27 @@ import {
 const SHADOW_PADDING = 20
 const DRAG_HANDLE_HEIGHT = 14
 const MIN_VISIBLE_PX = 100
+
+/**
+ * 窗口图标，显式交给窗口而不是让 Electron 从 exe 里取。
+ *
+ * Windows 的任务栏按钮优先用「窗口自己的图标」（WM_GETICON / 窗口类图标）；两者都空时才回落到
+ * AppUserModelID 对应的应用图标，而那份图标被资源管理器缓存过就不再刷新——开发态用
+ * electron.exe 跑过一次之后，同一 AUMID 的按钮会一直显示 Electron 的原子球，即使 exe 里已经
+ * 换成了应用图标。显式设置窗口图标可以绕开这层缓存。
+ *
+ * ico 里带 16/24/32/48/64/128/256 七个尺寸，任务栏按 32/48 取，比用 png 缩放清楚。
+ */
+function appIcon(): NativeImage | string | undefined {
+  const dir = app.isPackaged ? join(process.resourcesPath, 'resources') : join(app.getAppPath(), 'resources')
+  const file = join(dir, isWindows ? 'icon.ico' : 'icon.png')
+  if (!existsSync(file)) return undefined
+  // Windows 上直接把路径交给窗口：Electron 会把整份 ico 交给系统，任务栏按 24/32/48 各取所需；
+  // 先 createFromPath 再传 NativeImage 只会留下一个尺寸，缩小后边缘发虚。
+  if (isWindows) return file
+  const icon = nativeImage.createFromPath(file)
+  return icon.isEmpty() ? undefined : icon
+}
 
 function boundsAreVisible(bounds: NonNullable<AppConfig['window_bounds']>): boolean {
   return screen.getAllDisplays().some((d) => {
@@ -53,6 +75,7 @@ export function createMainWindow(config: AppConfig | null, options: { startHidde
     y: fallbackY,
     minWidth: 800,
     minHeight: 500,
+    icon: appIcon(),
     ...windowChromeOptions({ platform: chromePlatform, windowsBuild, dark: isDarkChrome(config?.theme, nativeTheme.shouldUseDarkColors) }),
     show: false,
     webPreferences: {
