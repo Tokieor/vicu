@@ -731,6 +731,14 @@ export function SettingsView() {
                     </p>
                   </div>
                 </label>
+
+                {/* 中文时间解析（lib/task-parser/zh-dates.ts）：给一行示例，完整规则在模块注释里 */}
+                <div className="rounded-control border border-[var(--border-color)] bg-[var(--bg-secondary)] p-3">
+                  <div className="text-xs font-medium text-[var(--text-primary)]">Chinese dates and times</div>
+                  <p className="mt-1 text-xs text-[var(--text-secondary)]">
+                    Also read from Chinese: 今天 / 明天 / 后天, 周三 / 下周一, 今天下午3点, 明天12:30, 晚上8点半.
+                  </p>
+                </div>
               </>
             )}
           </div>

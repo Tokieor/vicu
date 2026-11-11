@@ -1,0 +1,289 @@
+// 中文自然语言时间解析的用例。基准时刻是 2026-11-11（周三）09:00 本地时间。
+import { describe, expect, it } from 'vitest'
+import { toLocalDate } from '../../due-dates'
+import { parseTimeText, parseWhenText } from '../../when-logic'
+import { DEFAULT_PARSER_CONFIG, parse } from '../index'
+import { parseChineseNumber, parseZhClock, parseZhDate } from '../zh-dates'
+
+const NOW = new Date(2026, 10, 11, 9, 0, 0)
+const day = (date: Date | null) => (date ? toLocalDate(date) : null)
+const clock = (date: Date | null) => (date ? `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}` : null)
+
+/** 断言一次解析的日期、时刻与标记。 */
+function expectParse(text: string, expected: { date: string; time?: string; hasTime?: boolean; notes?: string[] }) {
+  const match = parseZhDate(text, NOW)
+  expect(match, `应该解析出时间：${text}`).not.toBeNull()
+  expect(day(match!.date)).toBe(expected.date)
+  if (expected.time !== undefined) expect(clock(match!.date)).toBe(expected.time)
+  if (expected.hasTime !== undefined) expect(match!.hasTime).toBe(expected.hasTime)
+  if (expected.notes) {
+    for (const note of expected.notes) expect(match!.notes).toContain(note)
+  }
+}
+
+describe('中文数字', () => {
+  it('认阿拉伯数字与中文数字', () => {
+    expect(parseChineseNumber('15')).toBe(15)
+    expect(parseChineseNumber('零')).toBe(0)
+    expect(parseChineseNumber('两')).toBe(2)
+    expect(parseChineseNumber('七')).toBe(7)
+    expect(parseChineseNumber('十')).toBe(10)
+    expect(parseChineseNumber('十二')).toBe(12)
+    expect(parseChineseNumber('二十')).toBe(20)
+    expect(parseChineseNumber('三十')).toBe(30)
+    expect(parseChineseNumber('四十五')).toBe(45)
+    expect(parseChineseNumber('五十九')).toBe(59)
+  })
+
+  it('读不出来就返回 null', () => {
+    expect(parseChineseNumber('')).toBeNull()
+    expect(parseChineseNumber('第')).toBeNull()
+    expect(parseChineseNumber('十一二')).toBeNull()
+  })
+})
+
+describe('需求里的三个例子', () => {
+  it('今天十二点十分 → 今天 12:10', () => {
+    expectParse('今天十二点十分', { date: '2026-11-11', time: '12:10', hasTime: true, notes: ['assumed-24-hour'] })
+  })
+
+  it('今天10点30 → 今天 10:30', () => {
+    expectParse('今天10点30', { date: '2026-11-11', time: '10:30', hasTime: true })
+  })
+
+  it('明天下午1点半 → 明天 13:30', () => {
+    expectParse('明天下午1点半', { date: '2026-11-12', time: '13:30', hasTime: true })
+  })
+})
+
+describe('相对日期', () => {
+  it('今天 / 明天 / 后天 / 大后天', () => {
+    expectParse('今天8点', { date: '2026-11-11', time: '08:00' })
+    expectParse('明天8点', { date: '2026-11-12', time: '08:00' })
+    expectParse('后天8点', { date: '2026-11-13', time: '08:00' })
+    expectParse('大后天8点', { date: '2026-11-14', time: '08:00' })
+  })
+
+  it('口语变体：今日 / 明儿 / 今儿', () => {
+    expectParse('今日下午4点', { date: '2026-11-11', time: '16:00' })
+    expectParse('明儿上午10点', { date: '2026-11-12', time: '10:00' })
+  })
+
+  it('N 天后 / N 周后 / N 个月后', () => {
+    expectParse('3天后', { date: '2026-11-14', hasTime: false })
+    expectParse('十天后', { date: '2026-11-21', hasTime: false })
+    expectParse('两周后', { date: '2026-11-25', hasTime: false })
+    expectParse('三个星期以后', { date: '2026-12-02', hasTime: false })
+    expectParse('2个月后', { date: '2027-01-11', hasTime: false })
+  })
+
+  it('下个月 / 下个月5号', () => {
+    expectParse('下个月', { date: '2026-12-11', hasTime: false })
+    expectParse('下个月5号', { date: '2026-12-05', hasTime: false })
+  })
+
+  it('本周内已过的日期落到下周', () => {
+    // 基准是周三：周五在三天后，周一已经过去，所以「周一」是下周一。
+    expectParse('周五下午3点', { date: '2026-11-13', time: '15:00' })
+    expectParse('周一上午9点', { date: '2026-11-16', time: '09:00' })
+    expectParse('这周一上午9点', { date: '2026-11-09', time: '09:00' })
+    expectParse('下周一上午9点', { date: '2026-11-16', time: '09:00' })
+    expectParse('下下周三上午9点', { date: '2026-11-25', time: '09:00' })
+  })
+
+  it('周末是本周六，过了就是下周六', () => {
+    expectParse('周末', { date: '2026-11-14', hasTime: false })
+    expectParse('这周末下午2点', { date: '2026-11-14', time: '14:00' })
+  })
+
+  it('下周（没有周几）落到下周一', () => {
+    expectParse('下周下午3点', { date: '2026-11-16', time: '15:00' })
+  })
+
+  it('月日与年份', () => {
+    expectParse('11月20日', { date: '2026-11-20', hasTime: false })
+    expectParse('11月20号下午3点半', { date: '2026-11-20', time: '15:30' })
+    // 已过去的月日按明年算（forwardDate）。
+    expectParse('10月20日', { date: '2027-10-20', hasTime: false })
+    expectParse('2026年12月1日', { date: '2026-12-01', hasTime: false })
+    expectParse('2027年1月1日早上8点', { date: '2027-01-01', time: '08:00' })
+  })
+
+  it('单独的「5号」：本月已过就下月', () => {
+    expectParse('5号', { date: '2026-12-05', hasTime: false })
+    expectParse('20号', { date: '2026-11-20', hasTime: false })
+  })
+})
+
+describe('时段与时刻', () => {
+  it('时段把 12 小时制换成 24 小时制', () => {
+    expectParse('明天凌晨2点', { date: '2026-11-12', time: '02:00' })
+    expectParse('明天早上7点', { date: '2026-11-12', time: '07:00' })
+    expectParse('明天上午10点', { date: '2026-11-12', time: '10:00' })
+    expectParse('明天中午12点', { date: '2026-11-12', time: '12:00' })
+    expectParse('明天中午1点', { date: '2026-11-12', time: '13:00' })
+    expectParse('明天下午6点', { date: '2026-11-12', time: '18:00' })
+    expectParse('明天傍晚7点', { date: '2026-11-12', time: '19:00' })
+    expectParse('明天晚上9点', { date: '2026-11-12', time: '21:00' })
+    expectParse('明天夜里11点', { date: '2026-11-12', time: '23:00' })
+  })
+
+  it('整点 / 半点 / 一刻 / 三刻', () => {
+    expectParse('明天下午3点整', { date: '2026-11-12', time: '15:00' })
+    expectParse('明天下午3点半', { date: '2026-11-12', time: '15:30' })
+    expectParse('后天早上7点一刻', { date: '2026-11-13', time: '07:15' })
+    expectParse('大后天晚上9点三刻', { date: '2026-11-14', time: '21:45' })
+  })
+
+  it('分钟的各种写法', () => {
+    expectParse('明天15点20分', { date: '2026-11-12', time: '15:20' })
+    expectParse('明天15点20', { date: '2026-11-12', time: '15:20' })
+    expectParse('明天三点零五分', { date: '2026-11-12', time: '03:05' })
+    expectParse('明天十点三十分', { date: '2026-11-12', time: '10:30' })
+    expectParse('明天10:30', { date: '2026-11-12', time: '10:30' })
+    expectParse('明天10：30', { date: '2026-11-12', time: '10:30' })
+  })
+
+  it('中英混排：中文日期 + 英文时刻', () => {
+    expectParse('明天 3pm', { date: '2026-11-12', time: '15:00' })
+    expectParse('明天 3:30pm', { date: '2026-11-12', time: '15:30' })
+    expectParse('明天 12am', { date: '2026-11-12', time: '00:00' })
+  })
+
+  it('今早 / 今晚 这类合成词', () => {
+    expectParse('今晚8点', { date: '2026-11-11', time: '20:00' })
+    expectParse('明早7点', { date: '2026-11-12', time: '07:00' })
+    expectParse('明晚9点半', { date: '2026-11-12', time: '21:30' })
+  })
+
+  it('午夜十二点与晚上十二点', () => {
+    // 「今晚12点」是今天的结束，落在次日 00:00。
+    expectParse('今晚12点', { date: '2026-11-12', time: '00:00', notes: ['midnight-next-day'] })
+    // 「午夜12点」是当天零点，已过就落到明天零点。
+    expectParse('午夜12点', { date: '2026-11-12', time: '00:00' })
+  })
+
+  it('只有时刻：今天已过就落到明天', () => {
+    expectParse('下午3点', { date: '2026-11-11', time: '15:00' })
+    expectParse('早上8点', { date: '2026-11-12', time: '08:00', notes: ['time-passed-tomorrow'] })
+    expectParse('3点', { date: '2026-11-12', time: '03:00', notes: ['assumed-24-hour', 'time-passed-tomorrow'] })
+  })
+
+  it('只写时段不写小时：只确定日期，不猜时刻', () => {
+    expectParse('明天下午', { date: '2026-11-12', hasTime: false, notes: ['date-only'] })
+    expectParse('周三晚上', { date: '2026-11-11', hasTime: false, notes: ['date-only'] })
+  })
+})
+
+describe('无法识别与过去表达', () => {
+  it('过去的表达不是截止日期', () => {
+    expect(parseZhDate('昨天下午3点', NOW)).toBeNull()
+    expect(parseZhDate('前天', NOW)).toBeNull()
+    expect(parseZhDate('上周三', NOW)).toBeNull()
+  })
+
+  it('没有时间信息、或只有时段，返回 null', () => {
+    expect(parseZhDate('随便写点什么', NOW)).toBeNull()
+    expect(parseZhDate('下午', NOW)).toBeNull()
+    expect(parseZhDate('', NOW)).toBeNull()
+  })
+
+  it('不含汉字时直接交给英文解析器', () => {
+    expect(parseZhDate('tomorrow 3pm', NOW)).toBeNull()
+    expect(parseZhDate('15:30', NOW)).toBeNull()
+  })
+
+  it('「每周一」是重复规则，不当日期', () => {
+    expect(parseZhDate('每周一开会', NOW)).toBeNull()
+  })
+
+  it('被其它解析器消费的区域不会重复解析', () => {
+    // 标签、优先级先被摘走，日期解析只看剩下的文本。
+    const result = parse('开会 @work p2 明天下午3点', DEFAULT_PARSER_CONFIG, NOW)
+    expect(result.labels).toEqual(['work'])
+    expect(result.priority).toBe(3)
+    expect(result.title).toBe('开会')
+    expect(day(result.dueDate)).toBe('2026-11-12')
+  })
+})
+
+describe('只解析时刻（When 面板的自定义时间）', () => {
+  it('中文时刻 → HH:mm', () => {
+    expect(parseZhClock('3点半')).toBe('03:30')
+    expect(parseZhClock('三点一刻')).toBe('03:15')
+    expect(parseZhClock('下午3点')).toBe('15:00')
+    expect(parseZhClock('晚上8点')).toBe('20:00')
+    expect(parseZhClock('3点20')).toBe('03:20')
+    expect(parseZhClock('十二点整')).toBe('12:00')
+  })
+
+  it('不是纯时刻就返回 null', () => {
+    expect(parseZhClock('明天下午3点')).toBeNull()
+    expect(parseZhClock('15:30')).toBeNull()
+    expect(parseZhClock('下午')).toBeNull()
+  })
+})
+
+describe('接进任务解析与文本选择', () => {
+  it('标题里的中文时间被摘出来，剩下的进标题', () => {
+    const result = parse('明天下午3点开会', DEFAULT_PARSER_CONFIG, NOW)
+    expect(result.title).toBe('开会')
+    expect(day(result.dueDate)).toBe('2026-11-12')
+    expect(clock(result.dueDate)).toBe('15:00')
+    expect(result.dueHasTime).toBe(true)
+    expect(result.tokens.filter((token) => token.type === 'date')).toHaveLength(1)
+  })
+
+  it('日期与标签、优先级同时出现', () => {
+    const result = parse('今天18:00 交周报 @work p2', DEFAULT_PARSER_CONFIG, NOW)
+    expect(result.title).toBe('交周报')
+    expect(day(result.dueDate)).toBe('2026-11-11')
+    expect(clock(result.dueDate)).toBe('18:00')
+    expect(result.labels).toEqual(['work'])
+    expect(result.priority).toBe(3)
+  })
+
+  it('只写日期时是全天（hasTime = false）', () => {
+    const result = parse('后天 买菜', DEFAULT_PARSER_CONFIG, NOW)
+    expect(result.title).toBe('买菜')
+    expect(day(result.dueDate)).toBe('2026-11-13')
+    expect(result.dueHasTime).toBe(false)
+  })
+
+  it('英文输入的行为没有变化', () => {
+    const result = parse('meeting tomorrow 3pm', DEFAULT_PARSER_CONFIG, NOW)
+    expect(result.title).toBe('meeting')
+    expect(day(result.dueDate)).toBe('2026-11-12')
+    expect(clock(result.dueDate)).toBe('15:00')
+  })
+
+  it('中文句子中间的时间照样摘掉', () => {
+    const result = parse('明天上午十点半和张总开会', DEFAULT_PARSER_CONFIG, NOW)
+    expect(result.title).toBe('和张总开会')
+    expect(day(result.dueDate)).toBe('2026-11-12')
+    expect(clock(result.dueDate)).toBe('10:30')
+  })
+
+  it('没有时间信息的中文原样留在标题里', () => {
+    const result = parse('写周报', DEFAULT_PARSER_CONFIG, NOW)
+    expect(result.title).toBe('写周报')
+    expect(result.dueDate).toBeNull()
+  })
+})
+
+describe('When 面板的文本输入', () => {
+  it('parseWhenText 读中文日期与时刻', () => {
+    const hit = parseWhenText('明天下午3点', NOW)
+    expect(hit?.value).toEqual({ date: '2026-11-12', time: '15:00' })
+    expect(parseWhenText('今天十二点十分', NOW)?.value).toEqual({ date: '2026-11-11', time: '12:10' })
+    expect(parseWhenText('后天', NOW)?.value).toEqual({ date: '2026-11-13', time: null })
+  })
+
+  it('parseTimeText 读中文时刻，英文写法照旧', () => {
+    expect(parseTimeText('三点半')).toBe('03:30')
+    expect(parseTimeText('下午3点')).toBe('15:00')
+    expect(parseTimeText('晚上8点')).toBe('20:00')
+    expect(parseTimeText('15:30')).toBe('15:30')
+    expect(parseTimeText('3pm')).toBe('15:00')
+  })
+})

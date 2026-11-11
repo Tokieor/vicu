@@ -1,6 +1,7 @@
 import * as chrono from 'chrono-node'
 import { nextWeekStart, startOfLocalDay, toLocalDate } from '../due-dates'
 import type { ParsedToken } from './types'
+import { parseZhDate } from './zh-dates'
 
 /**
  * Date extraction for the quick-add parser. Implements section 5.1 of
@@ -103,6 +104,25 @@ export function extractDate(
   // marker, "weekend", phrases about the past) become spaces too, so every index still points
   // into the input.
   const working = maskWeekdayAbbreviations(maskPastPhrases(maskWeekendWords(buildWorkingText(input, [...consumed, ...(options.hidden ?? [])]))))
+
+  // 中文输入先走中文解析：chrono 只有英文解析器，读不出「明天下午3点」。
+  // 命中就整条用它（中文没有词边界，混着英文规则反而会切错）。
+  const zh = parseZhDate(working, reference)
+  if (zh && !(options.skipTimeOnly && !zh.hasDate)) {
+    const overlaps = [...consumed, ...(options.hidden ?? [])].some((c) => zh.start < c.end && zh.end > c.start)
+    if (!overlaps) {
+      consumed.push({ start: zh.start, end: zh.end })
+      tokens.push({
+        type: 'date',
+        start: zh.start,
+        end: zh.end,
+        value: zh.date,
+        raw: input.slice(zh.start, zh.end),
+      })
+      return { dueDate: zh.date, hasTime: zh.hasTime, tokens }
+    }
+  }
+
   // chrono reads a copy in which consumed text and range words are marks instead: a date phrase
   // never continues across text another extractor took ("tomorrow @home 3pm"), and "friday to
   // sunday" is two dates, not a range.

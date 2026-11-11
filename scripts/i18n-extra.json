@@ -757,5 +757,8 @@
   "Yearly": "每年",
   "Custom": "自定义",
   "Monthly (custom)": "每月（自定义）",
-  "{0} (from completion)": "{0}（完成后）"
+  "{0} (from completion)": "{0}（完成后）",
+
+  "Chinese dates and times": "中文日期与时间",
+  "Also read from Chinese: 今天 / 明天 / 后天, 周三 / 下周一, 今天下午3点, 明天12:30, 晚上8点半.": "支持中文写法：今天 / 明天 / 后天、周三 / 下周一、今天下午3点、明天12:30、晚上8点半。"
 }

@@ -20,6 +20,7 @@ import {
 } from './date-display'
 import { formatMinutesOfDay } from './date-utils'
 import { extractDate } from './task-parser/extract-dates'
+import { parseZhClock } from './task-parser/zh-dates'
 
 // The pure rules of the When panel (card 3.4a1): what a picked day and time mean as a due date,
 // the month grid and its keyboard moves, the quick choices, and how typed text becomes a
@@ -60,9 +61,12 @@ export function timeLabel(time: string, fmt: DateFormat): string {
 
 /**
  * A time typed by hand: "15:30", "3pm", "3:30 pm", "7" (an hour on its own is read on the 24-hour
- * clock, "7pm" is 19:00). Returns "HH:mm" or null.
+ * clock, "7pm" is 19:00). Also reads the Chinese forms this app ships with: "3点半", "三点一刻",
+ * "下午3点", "晚上8点". Returns "HH:mm" or null.
  */
 export function parseTimeText(text: string): string | null {
+  const zh = parseZhClock(text)
+  if (zh) return zh
   const match = /^\s*(\d{1,2})(?:[:.h](\d{2}))?\s*([ap])?\.?m?\.?\s*$/i.exec(text)
   if (!match) return null
   let hour = Number(match[1])
