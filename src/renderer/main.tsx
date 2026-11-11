@@ -8,6 +8,7 @@ import { IsDarkProvider } from './hooks/use-is-dark'
 import { preloadRichTextEditor } from './components/rich-text/LazyRichTextEditor'
 import { api } from './lib/api'
 import { initDateFormat } from './lib/date-format'
+import { initLocale, useLocale } from './lib/i18n'
 import { ACCOUNT_CHANGED_EVENT } from './lib/account-events'
 import {
   PERSISTED_KEY_PREFIXES,
@@ -35,7 +36,21 @@ async function signedInServer(): Promise<string> {
 const withTimeout = <T,>(promise: Promise<T>, ms: number, fallback: T): Promise<T> =>
   Promise.race([promise, new Promise<T>((resolve) => setTimeout(() => resolve(fallback), ms))])
 
+/**
+ * 语言切换后把整棵树重挂载一次。
+ *
+ * t() 是普通函数而不是 hook，组件无法各自订阅语言变化；用 key 重挂载是最省事、
+ * 又不会残留旧语言文案的办法。路由状态挂在 router 对象上，URL 不变，所以页面不跳。
+ */
+function LocaleGate({ children }: { children: React.ReactNode }): React.ReactElement {
+  const locale = useLocale()
+  return <React.Fragment key={locale}>{children}</React.Fragment>
+}
+
 async function start(): Promise<void> {
+  // 语言要在首屏之前定下来，否则第一帧会闪一下英文
+  initLocale()
+
   // Show what the app showed last time right away (offline start-up, slow servers); the views
   // refetch as soon as they mount. Never let this hold up the first paint for long.
   // Dates are phrased in the system locale and the Settings clock; ask main before the first paint.
@@ -69,9 +84,11 @@ async function start(): Promise<void> {
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
       <QueryClientProvider client={queryClient}>
-        <IsDarkProvider>
-          <RouterProvider router={router} />
-        </IsDarkProvider>
+        <LocaleGate>
+          <IsDarkProvider>
+            <RouterProvider router={router} />
+          </IsDarkProvider>
+        </LocaleGate>
       </QueryClientProvider>
     </React.StrictMode>
   )

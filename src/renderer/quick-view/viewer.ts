@@ -70,6 +70,8 @@ import { diffLocalDays, dueToday, isDateOnly, isNoDueDate, toLocalDate } from '@
 import { followColorScheme, followConfiguredTheme } from '@/lib/theme'
 import { formatDateDisplay } from '@/lib/date-display'
 import { getDateFormat, initDateFormat, subscribeDateFormat } from '@/lib/date-format'
+import { initLocale } from '@/lib/i18n'
+import { startDomTranslation } from '@/lib/dom-i18n'
 import { priorityMarkSvg } from '../../shared/priority-mark-svg'
 import { blockOf, dueRepeatsBlockDay } from '../../shared/time-blocks'
 import { formatBlockRow } from '../../shared/date-display'
@@ -712,6 +714,10 @@ window.quickViewApi.onSyncCompleted(async () => {
 window.quickViewApi.onConfigChanged(() => {
   lastFetchTime = 0
 })
+
+// 小窗是手写 DOM，没有 JSX 可以插桩，用节点级翻译兜住界面文案
+initLocale()
+startDomTranslation()
 
 // Dates follow the system locale and the Settings clock choice. A change drops the cached list so
 // the next show draws the due dates again with the new format.

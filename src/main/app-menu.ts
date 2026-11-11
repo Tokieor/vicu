@@ -1,5 +1,6 @@
 import { app, Menu, shell, BrowserWindow, MenuItemConstructorOptions } from 'electron'
 import { isMac } from './platform'
+import { t } from '../shared/i18n'
 
 export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null): void {
   const template: MenuItemConstructorOptions[] = []
@@ -12,7 +13,7 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null):
         { role: 'about' },
         { type: 'separator' },
         {
-          label: 'Preferences',
+          label: t('Preferences'),
           accelerator: 'CmdOrCtrl+,',
           click: () => {
             const win = getMainWindow()
@@ -37,10 +38,10 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null):
 
   // ── File ──
   template.push({
-    label: 'File',
+    label: t('File'),
     submenu: [
       {
-        label: 'New task',
+        label: t('New task'),
         accelerator: 'CmdOrCtrl+N',
         click: () => {
           const win = getMainWindow()
@@ -53,7 +54,7 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null):
       },
       { type: 'separator' },
       {
-        label: 'Print',
+        label: t('Print'),
         accelerator: 'CmdOrCtrl+P',
         click: () => {
           const win = getMainWindow()
@@ -69,7 +70,7 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null):
 
   // ── Edit (CRITICAL for ⌘C/⌘V on macOS) ──
   template.push({
-    label: 'Edit',
+    label: t('Edit'),
     submenu: [
       { role: 'undo' },
       { role: 'redo' },
@@ -83,7 +84,7 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null):
         ? [
             { type: 'separator' as const },
             {
-              label: 'Speech',
+              label: t('Speech'),
               submenu: [
                 { role: 'startSpeaking' as const },
                 { role: 'stopSpeaking' as const },
@@ -96,18 +97,18 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null):
 
   // ── View ──
   template.push({
-    label: 'View',
+    label: t('View'),
     submenu: [
       {
         // Reads the page again from the server without leaving it (F5 is handled by the page).
-        label: 'Refresh',
+        label: t('Refresh'),
         accelerator: 'CmdOrCtrl+R',
         click: () => {
           const win = getMainWindow()
           if (win && win.isVisible()) win.webContents.send('refresh-view')
         },
       },
-      { role: 'forceReload', label: 'Reload window' },
+      { role: 'forceReload', label: t('Reload window') },
       { role: 'toggleDevTools' },
       { type: 'separator' },
       { role: 'resetZoom' },
@@ -120,7 +121,7 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null):
 
   // ── Window ──
   template.push({
-    label: 'Window',
+    label: t('Window'),
     submenu: [
       { role: 'minimize' },
       { role: 'zoom' },
@@ -140,7 +141,7 @@ export function setupApplicationMenu(getMainWindow: () => BrowserWindow | null):
     role: 'help',
     submenu: [
       {
-        label: 'Documentation',
+        label: t('Documentation'),
         click: () => shell.openExternal('https://vikunja.io/docs'),
       },
     ],

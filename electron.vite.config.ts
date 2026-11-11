@@ -1,6 +1,8 @@
 import { resolve } from 'path'
 import { defineConfig } from 'electron-vite'
 import react from '@vitejs/plugin-react'
+// @ts-expect-error 构建插件是 .mjs，没有类型声明，只在构建期使用
+import { i18nPlugin } from './scripts/i18n-vite-plugin.mjs'
 
 export default defineConfig({
   main: {
@@ -37,7 +39,7 @@ export default defineConfig({
         }
       }
     },
-    plugins: [react()],
+    plugins: [i18nPlugin({ include: '/src/renderer/' }), react()],
     define: {
       __APP_VERSION__: JSON.stringify(process.env.npm_package_version || '0.0.0'),
     },

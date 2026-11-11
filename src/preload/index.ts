@@ -13,6 +13,8 @@ const api = {
   platform: process.platform as 'darwin' | 'win32' | 'linux',
   /** 'mica' when the main window has Mica behind it (Windows 11 22H2+; set by main, window-chrome.ts). */
   windowMaterial: (process.argv.includes('--vicu-window-material=mica') ? 'mica' : 'none') as 'mica' | 'none',
+  /** 告诉主进程界面语言变了，好让它重建应用菜单（菜单在渲染进程之外）。 */
+  setLocale: (locale: string) => ipcRenderer.invoke('app:set-locale', locale),
 
   // Tasks
   fetchTasks: (params: Record<string, unknown>) =>

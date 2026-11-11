@@ -9,6 +9,7 @@ import { Button } from '@/components/shared/Button'
 import { PageHeader } from '@/components/shared/PageHeader'
 import { ReadingScroll } from '@/components/layout/ReadingScroll'
 import { applyTheme } from '@/lib/theme'
+import { changeLocale, useLocale, LOCALES, LOCALE_LABELS, t } from '@/lib/i18n'
 import { TokenPermissionsInfo } from '@/views/SetupView'
 import { QuickEntrySettings } from '@/components/settings/QuickEntrySettings'
 import { ObsidianSettings } from '@/components/settings/ObsidianSettings'
@@ -37,11 +38,19 @@ type SettingsTab = 'general' | 'projects' | 'integrations' | 'notifications' | '
 /** Every tab's content sits in the same column, left-aligned with the tab bar. */
 const SETTINGS_COLUMN = 'mx-6 max-w-[640px] space-y-6 pb-8 pt-4'
 
+// 主题选项的英文名（键是内部值，值是要送去翻译的原文）
+const THEME_LABELS: Record<ThemeOption, string> = {
+  light: 'Light',
+  dark: 'Dark',
+  system: 'System',
+}
+
 export function SettingsView() {
   const queryClient = useQueryClient()
   const navigate = useNavigate()
   const router = useRouter()
   const [activeTab, setActiveTab] = useState<SettingsTab>('general')
+  const locale = useLocale()
   const [url, setUrl] = useState('')
   const [token, setToken] = useState('')
   // The token itself never reaches this page: only whether one is saved, so Test Connection can use it.
@@ -393,7 +402,7 @@ export function SettingsView() {
                       onChange={() => { setTheme(opt); applyTheme(opt); handleQuickEntryChange({ theme: opt }) }}
                       className="sr-only"
                     />
-                    {opt.charAt(0).toUpperCase() + opt.slice(1)}
+                    {t(THEME_LABELS[opt])}
                   </label>
                 ))}
               </div>
@@ -472,6 +481,36 @@ export function SettingsView() {
               </p>
             </div>
 
+          </div>
+        </div>
+
+        <div className="rounded-card border border-[var(--border-color)] bg-[var(--bg-primary)] p-5">
+          <h2 className="mb-1 text-sm font-semibold text-[var(--text-primary)]">Language</h2>
+          <p className="mb-4 text-xs text-[var(--text-secondary)]">
+            Changes apply right away, in every Vicu window.
+          </p>
+          <div className="flex gap-3" role="radiogroup" aria-label="Language">
+            {LOCALES.map((code) => (
+              <label
+                key={code}
+                className={cn(
+                  'flex cursor-pointer items-center gap-1.5 rounded-control border px-3 py-1.5 text-xs font-medium transition-colors',
+                  locale === code
+                    ? 'border-accent-blue bg-accent-blue/10 text-accent-blue'
+                    : 'border-[var(--border-color)] text-[var(--text-secondary)] hover:border-[var(--text-secondary)]'
+                )}
+              >
+                <input
+                  type="radio"
+                  name="app_locale"
+                  value={code}
+                  checked={locale === code}
+                  onChange={() => changeLocale(code)}
+                  className="sr-only"
+                />
+                {LOCALE_LABELS[code]}
+              </label>
+            ))}
           </div>
         </div>
 

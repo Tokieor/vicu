@@ -9,6 +9,7 @@ import { useAppConfig } from '@/hooks/use-app-config'
 import { useOpenTaskCounts } from '@/hooks/use-project-progress'
 import { useTodayOverdueCount } from '@/hooks/use-today-overdue-count'
 import { isHiddenFromSidebar, isPlannerEnabled, isRoutinesEnabled } from '@/lib/vikunja-types'
+import { t } from '@/lib/i18n'
 
 export interface SmartListItem {
   id: SmartListId
@@ -38,8 +39,11 @@ export function useSmartLists(): SmartListItem[] {
   const routinesEnabled = isRoutinesEnabled(config)
   const plannerEnabled = isPlannerEnabled(config)
 
+  // 标签在渲染期翻译：ALL_SMART_LISTS 是模块级常量，若在那里包 t() 只会在加载时求值一次，
+  // 切换语言后不会更新。
   return ALL_SMART_LISTS.filter((i) =>
-    (i.id !== 'review' || reviewEnabled) && (i.id !== 'routines' || routinesEnabled) && (i.id !== 'plan' || plannerEnabled))
+    (i.id !== 'review' || reviewEnabled) && (i.id !== 'routines' || routinesEnabled) && (i.id !== 'plan' || plannerEnabled)
+  ).map((list) => ({ ...list, label: t(list.label) }))
 }
 
 export function SmartListNav() {

@@ -77,6 +77,8 @@ import { followColorScheme } from '../lib/theme'
 import { parseChips } from '../lib/parse-chips'
 import { motionMs, motionSpringCurve, travelStart } from '../lib/motion'
 import { initDateFormat, subscribeDateFormat } from '../lib/date-format'
+import { initLocale } from '../lib/i18n'
+import { startDomTranslation } from '../lib/dom-i18n'
 import type { ParseResult, ParserConfig, ParsedToken, TokenType } from '../lib/task-parser'
 import { getClipboardImages, fileToUint8Array } from '../lib/clipboard-images'
 import { AutocompleteDropdown } from './autocomplete'
@@ -962,6 +964,10 @@ window.quickEntryApi.onBrowserContext((ctx) => {
   browserLinked = ctx.mode === 'always'
   updateBrowserUI()
 })
+
+// 小窗是手写 DOM，没有 JSX 可以插桩，用节点级翻译兜住界面文案
+initLocale()
+startDomTranslation()
 
 // Dates follow the system locale and the Settings clock choice; main sends them and any change.
 void initDateFormat(window.quickEntryApi)

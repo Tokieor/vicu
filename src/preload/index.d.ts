@@ -75,6 +75,8 @@ export interface ElectronAPI {
   platform: 'darwin' | 'win32' | 'linux'
   /** 'mica' when the main window has Mica behind it (Windows 11 22H2+). */
   windowMaterial: 'mica' | 'none'
+  /** 通知主进程界面语言变化（主进程据此重建应用菜单）。 */
+  setLocale(locale: string): Promise<boolean>
 
   // Tasks
   fetchTasks(params: TaskQueryParams): Promise<ApiResult<Task[]>>
