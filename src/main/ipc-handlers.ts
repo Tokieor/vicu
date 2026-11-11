@@ -1,4 +1,4 @@
-import { shell, dialog, app, nativeTheme } from 'electron'
+import { shell, dialog, app, nativeTheme, BrowserWindow } from 'electron'
 import { handleTrusted } from './secure-ipc'
 import { tokenForConnectionTest } from './connection-test-token'
 import { isExternalAllowed } from './web-security-policy'
@@ -291,6 +291,11 @@ export function registerIpcHandlers(): void {
   handleTrusted('app:set-locale', (_event, locale: unknown) => {
     if (!isLocale(locale)) return false
     setLocale(locale)
+    // 小窗是手写 DOM + 节点级翻译，只有首次载入时会翻一遍：让它重新载入。
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (window.isDestroyed()) continue
+      window.webContents.send('locale-changed')
+    }
     return true
   })
 
@@ -713,7 +718,7 @@ export function registerIpcHandlers(): void {
   })
 
   // --- Quick Entry IPC ---
-  handleTrusted('qe:save-task', async (_event, title: string, description: string | null, dueDate: string | null, projectId: number | null, priority?: number, repeatAfter?: number, repeatMode?: number, extras?: { labels?: unknown; images?: unknown; location?: unknown; block?: { start_date: string; end_date: string } | null }) => {
+  handleTrusted('qe:save-task', async (_event, title: string, description: string | null, dueDate: string | null, projectId: number | null, priority?: number, repeatAfter?: number, repeatMode?: number, extras?: { labels?: unknown; images?: unknown; location?: unknown; block?: { start_date: string; end_date: string } | null; reminder?: { offset: number | null } }) => {
     const config = loadConfig()
     if (!config) return { success: false, error: 'Configuration not loaded' }
 
@@ -725,7 +730,7 @@ export function registerIpcHandlers(): void {
     }
 
     const targetProjectId = projectId || config.quick_entry_default_project_id || config.inbox_project_id
-    const taskPayload = quickEntryTaskPayload({ title, description, dueDate, block: extras?.block, priority, repeatAfter, repeatMode }, config)
+    const taskPayload = quickEntryTaskPayload({ title, description, dueDate, block: extras?.block, priority, repeatAfter, repeatMode, reminder: extras?.reminder }, config)
 
     // The create is queued with everything the user set when the server cannot be reached; see
     // createFromQuickEntry for what may be queued and why.

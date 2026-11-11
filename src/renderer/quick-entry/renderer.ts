@@ -18,6 +18,8 @@ declare global {
           location?: { place: string; trigger: 'arrive' | 'leave' }
           // The time block `for 30m` made; part of the create.
           block?: { start_date: string; end_date: string } | null
+          // 工具栏里选的提醒；缺省表示「跟随设置里的默认提醒」，null 表示明确不要提醒。
+          reminder?: { offset: number | null }
         },
       ): Promise<{ success: boolean; cached?: boolean; error?: string; mayExist?: boolean; data?: { id: number } }>
       uploadAttachment(taskId: number, fileData: Uint8Array, fileName: string, mimeType: string): Promise<{ success: boolean; error?: string; statusCode?: number }>
@@ -27,6 +29,8 @@ declare global {
       // The locale and clock dates are phrased with (system locale, Settings clock choice).
       getDateFormat(): Promise<{ locale: string; hour12: boolean }>
       onDateFormatChanged(callback: (format: { locale: string; hour12: boolean }) => void): void
+      // 语言在设置里换掉后，小窗跟着换成那一门语言（重新载入页面，见文件末尾）。
+      onLocaleChanged(callback: () => void): void
       // The note's final link when saving with it linked; the uid is written into the note then.
       resolveObsidianLink(): Promise<{ deepLink: string; noteName: string; isUidBased: boolean } | null>
       setHeight(height: number): Promise<void>
@@ -72,15 +76,16 @@ interface QuickEntryConfig {
 }
 
 import { blockFields, parse, getParserConfig, recurrenceToVikunja, extractBangToday } from '../lib/task-parser'
-import { dueToday, parsedDue } from '../lib/due-dates'
+import { dueNextWeek, dueToday, dueTomorrow, isDateOnly, localDateOf, parsedDue } from '../lib/due-dates'
 import { followColorScheme } from '../lib/theme'
 import { parseChips } from '../lib/parse-chips'
 import { motionMs, motionSpringCurve, travelStart } from '../lib/motion'
-import { initDateFormat, subscribeDateFormat } from '../lib/date-format'
-import { initLocale } from '../lib/i18n'
+import { getDateFormat, initDateFormat, subscribeDateFormat } from '../lib/date-format'
+import { initLocale, t } from '../lib/i18n'
 import { startDomTranslation } from '../lib/dom-i18n'
 import type { ParseResult, ParserConfig, ParsedToken, TokenType } from '../lib/task-parser'
 import { getClipboardImages, fileToUint8Array } from '../lib/clipboard-images'
+import { formatDateChip } from '../lib/date-utils'
 import { AutocompleteDropdown } from './autocomplete'
 import { cache } from './vikunja-cache'
 import { applyQuickEntryFollowUps } from '../lib/quick-entry-follow-ups'
@@ -89,7 +94,6 @@ import { escapeHtml, plainTextToDescriptionHtml } from '../lib/description-html'
 followColorScheme()
 
 const input = document.getElementById('task-input') as HTMLInputElement
-const descriptionHint = document.getElementById('description-hint')!
 const descriptionInput = document.getElementById('description-input') as HTMLTextAreaElement
 const container = document.getElementById('container')!
 const errorMessage = document.getElementById('error-message')!
@@ -113,6 +117,23 @@ const browserBadgeRemove = document.getElementById('browser-badge-remove')!
 const inputHighlight = document.getElementById('input-highlight')!
 const parsePreview = document.getElementById('parse-preview')!
 const imageGallery = document.getElementById('image-gallery')!
+
+// --- 工具栏（日期 / 提醒 / 优先级 / 标签 / 项目 / 备注 / 附加） ---
+const toolbar = document.getElementById('task-toolbar')!
+const toolPopover = document.getElementById('tool-popover')!
+const sendButton = document.getElementById('send-button') as HTMLButtonElement
+const attachInput = document.getElementById('attach-input') as HTMLInputElement
+const toolDate = document.getElementById('tool-date')!
+const toolDateLabel = document.getElementById('tool-date-label')!
+const toolReminder = document.getElementById('tool-reminder')!
+const toolReminderLabel = document.getElementById('tool-reminder-label')!
+const toolPriority = document.getElementById('tool-priority')!
+const toolPriorityLabel = document.getElementById('tool-priority-label')!
+const toolLabels = document.getElementById('tool-labels')!
+const toolLabelsLabel = document.getElementById('tool-labels-label')!
+const toolProject = document.getElementById('tool-project')!
+const toolProjectLabel = document.getElementById('tool-project-label')!
+const toolNotes = document.getElementById('tool-notes')!
 
 let errorTimeout: ReturnType<typeof setTimeout> | null = null
 let exclamationTodayEnabled = true
@@ -179,7 +200,7 @@ function showError(msg: string, visibleMs = 3000): void {
   }, visibleMs)
 }
 
-function showOfflineMessage(message = 'Saved offline \u2014 will sync when connected'): void {
+function showOfflineMessage(message = t('Saved offline \u2014 will sync when connected')): void {
   errorMessage.textContent = message
   errorMessage.hidden = false
   errorMessage.classList.add('offline')
@@ -203,15 +224,14 @@ function clearError(): void {
   errorMessage.hidden = true
 }
 
-function collapseDescription(): void {
+/** 收起备注。`clear` 为 false 时只收起、不清空（工具栏上「备注」按钮来回按时用）。 */
+function collapseDescription(clear = true): void {
   descriptionInput.classList.add('hidden')
-  descriptionInput.value = ''
-  descriptionHint.classList.remove('hidden')
+  if (clear) descriptionInput.value = ''
   updateTodayHints()
 }
 
 function expandDescription(): void {
-  descriptionHint.classList.add('hidden')
   descriptionInput.classList.remove('hidden')
   descriptionInput.focus()
   autoresizeDescription()
@@ -228,7 +248,10 @@ function autoresizeDescription(): void {
   descriptionInput.style.overflowY = descriptionInput.scrollHeight > MAX_DESCRIPTION_HEIGHT_PX ? 'auto' : 'hidden'
 }
 
-descriptionInput.addEventListener('input', autoresizeDescription)
+descriptionInput.addEventListener('input', () => {
+  autoresizeDescription()
+  refreshToolbar()
+})
 
 function isDescriptionExpanded(): boolean {
   return !descriptionInput.classList.contains('hidden')
@@ -261,8 +284,8 @@ async function updatePendingIndicator(): Promise<void> {
   const { pending, failed } = await window.quickEntryApi.getQueueCounts()
   if (pending > 0 || failed > 0) {
     const parts: string[] = []
-    if (pending > 0) parts.push(`${pending} change(s) pending sync`)
-    if (failed > 0) parts.push(`${failed} failed \u2014 open Vicu to review`)
+    if (pending > 0) parts.push(t('{0} change(s) pending sync', pending))
+    if (failed > 0) parts.push(t('{0} failed \u2014 open Vicu to review', failed))
     pendingCountEl.textContent = parts.join(' \u00b7 ')
     pendingIndicator.classList.toggle('has-failed', failed > 0)
     pendingIndicator.classList.remove('hidden')
@@ -284,7 +307,20 @@ function resetInput(): void {
   todayHintBelow.classList.add('hidden')
   currentProjectIndex = 0
   updateProjectHint()
+  resetToolbar()
   input.focus()
+}
+
+/** 每次弹出都是一张白纸：工具栏上的选择跟着清掉。 */
+function resetToolbar(): void {
+  pickedDate = undefined
+  pickedTime = null
+  pickedPriority = null
+  pickedLabelIds = []
+  pickedProjectId = null
+  pickedReminder = undefined
+  closeToolPopover()
+  refreshToolbar()
 }
 
 function buildProjectCycle(cfg: QuickEntryConfig): void {
@@ -304,6 +340,7 @@ function buildProjectCycle(cfg: QuickEntryConfig): void {
   }
   currentProjectIndex = 0
   updateProjectHint()
+  refreshToolbar()
 }
 
 function updateProjectHint(): void {
@@ -398,6 +435,7 @@ function refreshLabelsAndProjects(): void {
       cachedProjects = projectsResult.data
       cache.setProjects(projectsResult.data)
       if (lastConfig) buildProjectCycle(lastConfig)
+      else refreshToolbar()
     }
   }).catch(() => {
     // Offline or standalone — keep existing cache
@@ -469,6 +507,22 @@ function animateChipIn(chip: HTMLElement, type: string): void {
   )
 }
 
+/** chip 上的 × 读出来是什么（屏幕阅读器用）。 */
+const CHIP_TYPE_LABELS: Record<string, string> = {
+  date: 'Date',
+  length: 'Time',
+  priority: 'Priority',
+  label: 'Labels',
+  project: 'Project',
+  recurrence: 'Repeat',
+  place: 'Reminder',
+}
+
+function chipDismissLabel(type: string): string {
+  const name = CHIP_TYPE_LABELS[type]
+  return name ? `${t('Remove')} ${t(name)}` : t('Remove')
+}
+
 function renderParsePreview(result: ParseResult): void {
   // The same chips, in the same words, as the main window's composer (lib/parse-chips.ts).
   const chips = parseChips(result)
@@ -491,7 +545,7 @@ function renderParsePreview(result: ParseResult): void {
     const level = chip.type === 'priority' ? ` priority-${Math.min(Math.max(chip.priority ?? 1, 1), 5)}` : ''
     const source = chip.source ?? 'text'
     const signature = `${chip.label}|${chip.priority ?? ''}|${source}`
-    const html = `<span class="parse-chip parse-chip-${chip.type}${level}" data-chip-key="${escapeHtml(chip.key)}" data-chip-sig="${escapeHtml(signature)}" data-chip-type="${chip.type}" data-chip-source="${source}">${escapeHtml(chip.label)}<button class="parse-chip-dismiss" data-type="${chip.type}" aria-label="Dismiss ${chip.type}">&times;</button></span>`
+    const html = `<span class="parse-chip parse-chip-${chip.type}${level}" data-chip-key="${escapeHtml(chip.key)}" data-chip-sig="${escapeHtml(signature)}" data-chip-type="${chip.type}" data-chip-source="${source}">${escapeHtml(chip.label)}<button class="parse-chip-dismiss" data-type="${chip.type}" aria-label="${escapeHtml(chipDismissLabel(chip.type))}">&times;</button></span>`
     const kept = existing.get(chip.key)
     if (kept && kept.dataset.chipSig === signature) {
       next.push(kept)
@@ -509,6 +563,418 @@ function renderParsePreview(result: ParseResult): void {
   shownChipKeys = nextKeys
   for (const { el, type } of entering) animateChipIn(el, type)
 }
+
+// --- 工具栏：日期 / 提醒 / 优先级 / 标签 / 项目 / 备注 / 附加 ---
+//
+// 和主窗口新建任务输入框下面那排按钮是同一件事：文本里能写出来的东西（"明天 15:00 #标签 #收集箱"）
+// 这里也能点出来，点出来的选择优先于文本，文本里那份就先让位（suppressedTypes），
+// 免得同一个字段同时显示两个值。
+
+interface ToolOption {
+  key: string
+  label: string
+  selected?: boolean
+  disabled?: boolean
+}
+
+interface ToolPopover {
+  tool: string
+  title: string
+  /** 列表为空时的一句话（"还没有标签"）。 */
+  empty?: string
+  /** 列表上方的一句提醒（"提醒需要一个到期时间"）。 */
+  note?: string
+  /** 每次重画都重新算，标签多选来回点的时候列表要跟着变。 */
+  items: () => ToolOption[]
+  /** 返回 true 表示这次点选之后继续开着。 */
+  onPick: (key: string) => boolean
+}
+
+/** 工具栏上做出的选择。undefined 表示「文本里怎么说就怎么来」。 */
+let pickedDate: string | undefined
+/** 选日期时从文本里带过来的时刻（"明天下午3点" + 点「下周一」= 下周一 15:00）。 */
+let pickedTime: { hours: number; minutes: number } | null = null
+let pickedPriority: number | null = null
+let pickedLabelIds: number[] = []
+let pickedProjectId: number | null = null
+/** 提醒：undefined = 用设置里的默认提醒，null = 不提醒，数字 = 相对到期时间的偏移（秒）。 */
+let pickedReminder: number | null | undefined
+let activePopover: ToolPopover | null = null
+
+const PRIORITY_OPTIONS: Array<{ value: number; label: string }> = [
+  { value: 0, label: 'None' },
+  { value: 1, label: 'Low' },
+  { value: 2, label: 'Medium' },
+  { value: 3, label: 'High' },
+  { value: 4, label: 'Urgent' },
+]
+
+/** 提醒偏移：0 是「到期时」，负数是提前多久。key 走字符串，null 与 undefined 各占一个。 */
+const REMINDER_OPTIONS: Array<{ key: string; label: string; offset: number | null | undefined }> = [
+  { key: 'default', label: 'Default reminder', offset: undefined },
+  { key: 'due', label: 'At due time', offset: 0 },
+  { key: '1h', label: '1 hour before', offset: -3600 },
+  { key: '1d', label: '1 day before', offset: -86400 },
+  { key: 'off', label: 'No reminder', offset: null },
+]
+
+/** 任务最后会用到的到期时间：工具栏选的优先，其次是文本里解析出来的。 */
+function effectiveDue(): { value: string | null; hasTime: boolean } {
+  if (pickedDate !== undefined) {
+    if (pickedTime) {
+      // 只选了哪一天：文本里的时刻留在这一天，不因为换日子被抹掉
+      const day = new Date(pickedDate)
+      const at = new Date(day.getFullYear(), day.getMonth(), day.getDate(), pickedTime.hours, pickedTime.minutes, 0, 0)
+      return { value: at.toISOString(), hasTime: true }
+    }
+    return { value: pickedDate, hasTime: !isDateOnly(pickedDate) }
+  }
+  if (parserConfig.enabled && lastParseResult?.dueDate) {
+    return { value: parsedDue(lastParseResult.dueDate, lastParseResult.dueHasTime), hasTime: lastParseResult.dueHasTime }
+  }
+  if (!parserConfig.enabled && exclamationTodayEnabled) {
+    const bang = extractBangToday(input.value)
+    if (bang.dueDate) return { value: dueToday(), hasTime: false }
+  }
+  return { value: null, hasTime: false }
+}
+
+function effectivePriority(): number {
+  if (pickedPriority !== null) return pickedPriority
+  if (parserConfig.enabled && lastParseResult?.priority) return lastParseResult.priority
+  return 0
+}
+
+/** 标签是并集：文本里写的，加上工具栏里点上的。 */
+function effectiveLabelNames(): string[] {
+  const names = new Set<string>()
+  if (parserConfig.enabled && lastParseResult) {
+    for (const label of lastParseResult.labels) names.add(label)
+  }
+  for (const id of pickedLabelIds) {
+    const label = cachedLabels.find((candidate) => candidate.id === id)
+    if (label) names.add(label.title)
+  }
+  return [...names]
+}
+
+function effectiveProjectId(): number | null {
+  if (pickedProjectId !== null) return pickedProjectId
+  if (parserConfig.enabled && lastParseResult?.project) {
+    const name = lastParseResult.project.toLowerCase()
+    const match = cachedProjects.find((project) => project.title.toLowerCase() === name)
+    if (match) return match.id
+  }
+  return projectCycle.length > 0 ? projectCycle[currentProjectIndex].id : null
+}
+
+/** 项目按钮上写的名字：缓存里有就用它，否则退回那一位（默认是收件箱）。 */
+function projectLabelOf(id: number | null): string {
+  if (id !== null) {
+    const known = cachedProjects.find((project) => project.id === id)
+    if (known) return known.title
+    const cycled = projectCycle.find((project) => project.id === id)
+    if (cycled?.title) return cycled.title
+  }
+  return t('Inbox')
+}
+
+function priorityLabelOf(priority: number): string {
+  const option = PRIORITY_OPTIONS.find((candidate) => candidate.value === priority)
+  return option ? t(option.label) : t('Priority')
+}
+
+function reminderLabelOf(reminder: number | null | undefined): string {
+  if (reminder === undefined) return t('Reminder')
+  if (reminder === null) return t('No reminder')
+  if (reminder === 0) return t('At due time')
+  if (reminder === -3600) return t('1 hour before')
+  if (reminder === -86400) return t('1 day before')
+  return t('Reminder')
+}
+
+/** 把工具栏上的值写回按钮：文字、激活色、发送键的可用状态。 */
+function refreshToolbar(): void {
+  const due = effectiveDue()
+  toolDateLabel.textContent = due.value
+    ? formatDateChip(new Date(due.value), !due.hasTime, new Date(), getDateFormat())
+    : t('Date')
+  toolDate.classList.toggle('active', !!due.value)
+
+  toolReminderLabel.textContent = reminderLabelOf(pickedReminder)
+  toolReminder.classList.toggle('active', pickedReminder !== undefined && pickedReminder !== null)
+
+  const priority = effectivePriority()
+  toolPriorityLabel.textContent = priority > 0 ? priorityLabelOf(priority) : t('Priority')
+  toolPriority.classList.toggle('active', priority > 0)
+
+  const labelCount = effectiveLabelNames().length
+  toolLabelsLabel.textContent = labelCount === 0
+    ? t('Labels')
+    : labelCount === 1
+      ? t('{0} label', labelCount)
+      : t('{0} labels', labelCount)
+  toolLabels.classList.toggle('active', labelCount > 0)
+
+  toolProjectLabel.textContent = projectLabelOf(effectiveProjectId())
+
+  const notesOpen = isDescriptionExpanded() || descriptionInput.value.trim().length > 0
+  toolNotes.classList.toggle('active', notesOpen)
+  toolNotes.setAttribute('aria-pressed', notesOpen ? 'true' : 'false')
+
+  sendButton.disabled = input.value.trim().length === 0
+}
+
+function closeToolPopover(): void {
+  activePopover = null
+  toolPopover.classList.add('hidden')
+  toolPopover.replaceChildren()
+  for (const button of toolbar.querySelectorAll<HTMLElement>('.tool-button')) {
+    button.setAttribute('aria-expanded', 'false')
+  }
+}
+
+function renderToolPopover(): void {
+  const popover = activePopover
+  if (!popover) return
+  toolPopover.replaceChildren()
+
+  const heading = document.createElement('div')
+  heading.className = 'tool-popover-title'
+  heading.textContent = popover.title
+  toolPopover.appendChild(heading)
+
+  if (popover.note) {
+    const note = document.createElement('div')
+    note.className = 'tool-option-empty'
+    note.textContent = popover.note
+    toolPopover.appendChild(note)
+  }
+
+  const items = popover.items()
+  if (items.length === 0) {
+    const empty = document.createElement('div')
+    empty.className = 'tool-option-empty'
+    empty.textContent = popover.empty ?? ''
+    toolPopover.appendChild(empty)
+  }
+  for (const item of items) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = `tool-option${item.selected ? ' selected' : ''}`
+    button.dataset.key = item.key
+    button.setAttribute('role', 'option')
+    button.setAttribute('aria-selected', item.selected ? 'true' : 'false')
+    button.disabled = item.disabled === true
+    const label = document.createElement('span')
+    label.textContent = item.label
+    button.appendChild(label)
+    if (item.selected) {
+      const check = document.createElement('span')
+      check.className = 'tool-check'
+      check.setAttribute('aria-hidden', 'true')
+      check.textContent = '\u2713'
+      button.insertBefore(check, label)
+    }
+    button.addEventListener('click', () => {
+      if (button.disabled) return
+      const keepOpen = popover.onPick(item.key)
+      if (keepOpen) renderToolPopover()
+      else closeToolPopover()
+    })
+    toolPopover.appendChild(button)
+  }
+
+  toolPopover.classList.remove('hidden')
+  for (const button of toolbar.querySelectorAll<HTMLElement>('.tool-button')) {
+    button.setAttribute('aria-expanded', button.dataset.tool === popover.tool ? 'true' : 'false')
+  }
+}
+
+function showToolPopover(popover: ToolPopover): void {
+  // 同一个按钮再按一次就收起来
+  if (activePopover?.tool === popover.tool) {
+    closeToolPopover()
+    return
+  }
+  activePopover = popover
+  renderToolPopover()
+}
+
+/** 让文本里某一类识别结果让位（工具栏上已经定了这个字段）。 */
+function suppressTokenType(type: TokenType): void {
+  const rawTexts = lastParseResult?.tokens
+    .filter((token) => token.type === type)
+    .map((token) => input.value.substring(token.start, token.end)) ?? []
+  if (rawTexts.length > 0) suppressedTypes.set(type, rawTexts)
+  else suppressedTypes.delete(type)
+  handleInputChange()
+}
+
+function pickDateOption(key: string): void {
+  if (key === 'clear') {
+    // 清除是一次动作，不是一种「永远没有日期」的状态：把这个日期从文本里让开，
+    // 之后再写新的日期照样生效。
+    pickedDate = undefined
+    pickedTime = null
+  } else {
+    // 文本里带时刻的话，换日子时把那个时刻一起带过去
+    const parsed = parserConfig.enabled ? lastParseResult : null
+    pickedTime = parsed?.dueDate && parsed.dueHasTime
+      ? { hours: parsed.dueDate.getHours(), minutes: parsed.dueDate.getMinutes() }
+      : null
+    pickedDate = key === 'today' ? dueToday() : key === 'tomorrow' ? dueTomorrow() : dueNextWeek()
+  }
+  // 文本里的日期退到后面去，别让按钮和 chip 显示两个时间
+  suppressTokenType('date')
+  refreshToolbar()
+  input.focus()
+}
+
+function pickPriorityOption(key: string): void {
+  const value = Number(key)
+  pickedPriority = Number.isFinite(value) && value > 0 ? value : 0
+  suppressTokenType('priority')
+  refreshToolbar()
+  input.focus()
+}
+
+function pickProjectOption(key: string): void {
+  const value = Number(key)
+  pickedProjectId = Number.isFinite(value) && value > 0 ? value : null
+  suppressTokenType('project')
+  refreshToolbar()
+  input.focus()
+}
+
+function toggleLabelOption(key: string): boolean {
+  const id = Number(key)
+  if (!Number.isFinite(id)) return true
+  pickedLabelIds = pickedLabelIds.includes(id)
+    ? pickedLabelIds.filter((candidate) => candidate !== id)
+    : [...pickedLabelIds, id]
+  refreshToolbar()
+  return true
+}
+
+function pickReminderOption(key: string): void {
+  const option = REMINDER_OPTIONS.find((candidate) => candidate.key === key)
+  pickedReminder = option ? option.offset : undefined
+  refreshToolbar()
+  input.focus()
+}
+
+toolDate.addEventListener('click', () => {
+  const due = effectiveDue()
+  const today = dueToday()
+  const tomorrow = dueTomorrow()
+  const nextWeek = dueNextWeek()
+  // 按「哪一天」比，不按时刻比：明天 15:00 也应该点亮「明天」
+  const dueDay = due.value ? localDateOf(due.value) : ''
+  showToolPopover({
+    tool: 'date',
+    title: t('Date'),
+    items: () => [
+      { key: 'today', label: 'Today', selected: dueDay === localDateOf(today) },
+      { key: 'tomorrow', label: 'Tomorrow', selected: dueDay === localDateOf(tomorrow) },
+      { key: 'nextweek', label: 'Next Monday', selected: dueDay === localDateOf(nextWeek) },
+      // 清除是一个动作，不是一种「当前状态」，所以不带选中标记
+      { key: 'clear', label: 'Clear' },
+    ],
+    onPick: (key) => { pickDateOption(key); return false },
+  })
+})
+
+toolReminder.addEventListener('click', () => {
+  const hasDue = effectiveDue().value !== null
+  showToolPopover({
+    tool: 'reminder',
+    title: t('Reminder'),
+    note: hasDue ? undefined : t('A reminder needs a due date.'),
+    items: () => REMINDER_OPTIONS
+      // 没有到期时间时，相对提醒没有落点，只留「默认」和「不提醒」两个选项
+      .filter((option) => hasDue || option.offset === undefined || option.offset === null)
+      .map((option) => ({
+        key: option.key,
+        label: option.label,
+        selected: pickedReminder === option.offset,
+      })),
+    onPick: (key) => { pickReminderOption(key); return false },
+  })
+})
+
+toolPriority.addEventListener('click', () => {
+  const current = effectivePriority()
+  showToolPopover({
+    tool: 'priority',
+    title: t('Priority'),
+    items: () => PRIORITY_OPTIONS.map((option) => ({
+      key: String(option.value),
+      label: option.label,
+      selected: current === option.value,
+    })),
+    onPick: (key) => { pickPriorityOption(key); return false },
+  })
+})
+
+toolLabels.addEventListener('click', () => {
+  showToolPopover({
+    tool: 'labels',
+    title: t('Labels'),
+    empty: t('No labels'),
+    items: () => cachedLabels.map((label) => ({
+      key: String(label.id),
+      label: label.title,
+      selected: pickedLabelIds.includes(label.id),
+    })),
+    onPick: (key) => toggleLabelOption(key),
+  })
+})
+
+toolProject.addEventListener('click', () => {
+  const current = effectiveProjectId()
+  showToolPopover({
+    tool: 'project',
+    title: t('Project'),
+    empty: t('No projects'),
+    items: () => cachedProjects.map((project) => ({
+      key: String(project.id),
+      label: project.title,
+      selected: current === project.id,
+    })),
+    onPick: (key) => { pickProjectOption(key); return false },
+  })
+})
+
+toolNotes.addEventListener('click', () => {
+  closeToolPopover()
+  if (isDescriptionExpanded()) collapseDescription(false)
+  else expandDescription()
+  refreshToolbar()
+})
+
+document.getElementById('tool-attach')!.addEventListener('click', () => {
+  closeToolPopover()
+  attachInput.click()
+})
+
+attachInput.addEventListener('change', async () => {
+  const files = Array.from(attachInput.files ?? [])
+  attachInput.value = ''
+  // 和粘贴走同一条路：图片先暂存，保存任务时再上传
+  if (files.length === 0) return
+  if (!isDescriptionExpanded()) expandDescription()
+  for (const file of files) {
+    try {
+      await stageImageFile(file, file.name || 'image', file.type || 'application/octet-stream')
+    } catch {
+      showError('Failed to read pasted image')
+    }
+  }
+  refreshToolbar()
+})
+
+sendButton.addEventListener('click', () => { void saveTask() })
 
 // --- Image staging ---
 
@@ -550,6 +1016,19 @@ function renderImageGallery(): void {
 function addPendingImage(img: PendingImage): void {
   pendingImages.push(img)
   renderImageGallery()
+}
+
+/** 一张图片进暂存区（粘贴和工具栏「附加」共用这一条路）。 */
+async function stageImageFile(file: File, name: string, mime: string): Promise<void> {
+  const bytes = await fileToUint8Array(file)
+  const blobUrl = URL.createObjectURL(new Blob([bytes as BlobPart], { type: mime }))
+  addPendingImage({
+    uuid: crypto.randomUUID().slice(0, 8),
+    blobUrl,
+    bytes,
+    name,
+    mime,
+  })
 }
 
 function removePendingImage(uuid: string): void {
@@ -660,6 +1139,17 @@ async function saveTask(): Promise<void> {
   descriptionInput.disabled = true
   clearError()
 
+  // 工具栏上点过的东西盖过文本：日期、优先级、项目各一份，标签是并集。
+  if (pickedDate !== undefined) dueDate = pickedDate
+  if (pickedPriority !== null) priority = pickedPriority > 0 ? pickedPriority : undefined
+  if (pickedProjectId !== null) projectId = pickedProjectId
+  if (pickedLabelIds.length > 0) {
+    const picked = pickedLabelIds
+      .map((id) => cachedLabels.find((label) => label.id === id)?.title)
+      .filter((name): name is string => !!name)
+    parsedLabels = [...new Set([...parsedLabels, ...picked])]
+  }
+
   // Labels and pasted images ride along: if the create has to be queued offline the queue keeps
   // them and replays them after the task exists. Online, they are applied below as before.
   const labelRefs = parsedLabels.map((name) => {
@@ -667,7 +1157,9 @@ async function saveTask(): Promise<void> {
     return match ? { id: match.id, title: match.title } : { title: name }
   })
   const imageInputs = pendingImages.map((img) => ({ name: img.name, mime: img.mime, bytes: img.bytes }))
-  const result = await window.quickEntryApi.saveTask(title, description || null, dueDate, projectId, priority, repeatAfter, repeatMode, { labels: labelRefs, images: imageInputs, location, block: parserConfig.enabled ? blockFields(lastParseResult) : null })
+  // 工具栏上选过提醒才发过去；没选过就交给主进程用设置里的默认提醒。
+  const reminder = pickedReminder === undefined ? undefined : { offset: pickedReminder }
+  const result = await window.quickEntryApi.saveTask(title, description || null, dueDate, projectId, priority, repeatAfter, repeatMode, { labels: labelRefs, images: imageInputs, location, reminder, block: parserConfig.enabled ? blockFields(lastParseResult) : null })
 
   if (result.success) {
     const createdTask = result.data as (Record<string, unknown> & { id?: number }) | undefined
@@ -687,7 +1179,7 @@ async function saveTask(): Promise<void> {
     }
 
     if (result.cached || queuedFollowUps) {
-      showOfflineMessage(queuedFollowUps && !result.cached ? 'Task saved \u2014 labels and images will sync when connected' : undefined)
+      showOfflineMessage(queuedFollowUps && !result.cached ? t('Task saved \u2014 labels and images will sync when connected') : undefined)
     } else {
       window.quickEntryApi.closeWindow()
     }
@@ -734,6 +1226,9 @@ window.quickEntryApi.onShowWindow(() => {
   container.classList.add('visible')
   input.focus()
 
+  // 窗口隐藏时主进程不会照着内容改高度（改了也看不见），所以显示之后补一次。
+  requestAnimationFrame(syncWindowHeight)
+
   // Refresh config, pending count, and labels/projects in the background
   window.quickEntryApi.getConfig().then((cfg) => {
     if (cfg) {
@@ -758,6 +1253,12 @@ window.quickEntryApi.onDragHover((hovering: boolean) => {
 // Keyboard handling on title input
 input.addEventListener('keydown', async (e) => {
   if (autocomplete.handleKeyDown(e)) return
+  // 下拉列表开着的时候，Escape 先收列表，再按一次才关窗口
+  if (e.key === 'Escape' && activePopover) {
+    e.preventDefault()
+    closeToolPopover()
+    return
+  }
   if ((e.ctrlKey || e.metaKey) && e.key === 'l') {
     e.preventDefault()
     if (obsidianContext) {
@@ -851,6 +1352,7 @@ function handleInputChange(): void {
 
   if (!parserConfig.enabled || !raw) {
     clearNlpState()
+    refreshToolbar()
     return
   }
 
@@ -867,6 +1369,9 @@ function handleInputChange(): void {
     todayHintInline.classList.add('hidden')
     todayHintBelow.classList.add('hidden')
   }
+
+  // 按钮上的日期、优先级、标签跟着文本一起变
+  refreshToolbar()
 }
 
 // Detect input changes and run parser
@@ -895,15 +1400,7 @@ async function handleImagePaste(e: ClipboardEvent): Promise<void> {
   if (!isDescriptionExpanded()) expandDescription()
   for (const img of images) {
     try {
-      const bytes = await fileToUint8Array(img.file)
-      const blobUrl = URL.createObjectURL(new Blob([bytes as BlobPart], { type: img.mime }))
-      addPendingImage({
-        uuid: crypto.randomUUID().slice(0, 8),
-        blobUrl,
-        bytes,
-        name: img.name,
-        mime: img.mime,
-      })
+      await stageImageFile(img.file, img.name, img.mime)
     } catch {
       showError('Failed to read pasted image')
     }
@@ -930,12 +1427,9 @@ parsePreview.addEventListener('click', (e) => {
   if (!btn) return
   const tokenType = btn.dataset.type as TokenType | undefined
   if (!tokenType) return
-  // Store the raw token texts so we can lift suppression when they're edited
-  const rawTexts = lastParseResult?.tokens
-    .filter((t) => t.type === tokenType)
-    .map((t) => input.value.substring(t.start, t.end)) ?? []
-  suppressedTypes.set(tokenType, rawTexts)
-  handleInputChange()
+  // 记下原文，用户改到这段文字时抑制自动解除（见 input 的 listener）
+  suppressTokenType(tokenType)
+  refreshToolbar()
   input.focus()
 })
 
@@ -969,10 +1463,14 @@ window.quickEntryApi.onBrowserContext((ctx) => {
 initLocale()
 startDomTranslation()
 
+// 语言是在设置里换的，这个小窗可能早就开着：换完重新载入一次，整页文案跟着换。
+window.quickEntryApi.onLocaleChanged(() => { location.reload() })
+
 // Dates follow the system locale and the Settings clock choice; main sends them and any change.
 void initDateFormat(window.quickEntryApi)
 subscribeDateFormat(() => {
   if (lastParseResult) renderParsePreview(lastParseResult)
+  refreshToolbar()
 })
 
 // Load config on startup
@@ -983,29 +1481,41 @@ async function loadInitialConfig(): Promise<void> {
     applyConfig(cfg)
   }
   refreshLabelsAndProjects()
+  refreshToolbar()
 
   await updatePendingIndicator()
+  // --quick-entry 启动时窗口可能已经显示，ResizeObserver 那次早于可见性设置
+  requestAnimationFrame(syncWindowHeight)
 }
 loadInitialConfig()
 
-// Close window when clicking outside the container (transparent area)
+// Close window when clicking outside the container (transparent area); inside, a click away from
+// the toolbar only closes the list it opened.
 document.addEventListener('mousedown', (e) => {
-  if (!container.contains(e.target as Node)) {
+  const target = e.target as Node
+  if (!container.contains(target)) {
     window.quickEntryApi.closeWindow()
+    return
   }
+  if (activePopover && !toolbar.contains(target) && !toolPopover.contains(target)) closeToolPopover()
 })
 
 // Initial animation on first load
 requestAnimationFrame(() => {
   container.classList.add('visible')
   input.focus()
+  syncWindowHeight()
 })
 
 // Keep the window height matched to the container so rounded corners stay visible
-// as the description grows or images are added/removed.
-const resizeObserver = new ResizeObserver(() => {
+// as the description grows, images are added, or a toolbar list opens.
+function syncWindowHeight(): void {
   const h = container.offsetHeight
   if (h > 0) window.quickEntryApi.setHeight(h)
+}
+
+const resizeObserver = new ResizeObserver(() => {
+  syncWindowHeight()
 })
 resizeObserver.observe(container)
 

@@ -132,6 +132,29 @@ describe('Quick Entry and Quick View with the offline queue', () => {
       expect(queue.getPending()[0]).toMatchObject({ fields: { reminders: built.reminders } })
     })
 
+    it('takes the reminder picked in the box toolbar over the default one', () => {
+      const settings = { notifications_default_reminder_offset: 900, notifications_default_reminder_relative_to: 'due_date' as const }
+      const dueDate = '2026-10-08T14:30:00.000Z'
+
+      // 到期时：relative_period 0，时间就是到期时间
+      expect(quickEntryTaskPayload({ title: 'Call', description: null, dueDate, reminder: { offset: 0 } }, settings).reminders)
+        .toEqual([{ reminder: dueDate, relative_period: 0, relative_to: 'due_date' }])
+
+      // 提前一小时：一条，不是默认的提前 15 分钟那条
+      expect(quickEntryTaskPayload({ title: 'Call', description: null, dueDate, reminder: { offset: -3600 } }, settings).reminders)
+        .toEqual([{ reminder: '2026-10-08T13:30:00.000Z', relative_period: -3600, relative_to: 'due_date' }])
+
+      // 不提醒：默认提醒也不许补上
+      expect(quickEntryTaskPayload({ title: 'Call', description: null, dueDate, reminder: { offset: null } }, settings).reminders)
+        .toBeUndefined()
+    })
+
+    it('keeps the reminder off a time block by its start', () => {
+      const block = { start_date: '2026-10-08T14:00:00.000Z', end_date: '2026-10-08T14:30:00.000Z' }
+      const built = quickEntryTaskPayload({ title: 'Call', description: null, dueDate: '2026-10-08T22:59:59.000Z', block, reminder: { offset: -900 } }, null)
+      expect(built.reminders).toEqual([{ reminder: '2026-10-08T13:45:00.000Z', relative_period: -900, relative_to: 'start_date' }])
+    })
+
     it.each([
       ['ECONNREFUSED 127.0.0.1:3456', undefined],
       ['HTTP 503', 503],

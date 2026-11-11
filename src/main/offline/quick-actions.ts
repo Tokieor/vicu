@@ -1,4 +1,4 @@
-import { withDefaultReminder, type DefaultReminderSettings } from '../../shared/default-reminder'
+import { buildDefaultReminder, withDefaultReminder, type DefaultReminderSettings } from '../../shared/default-reminder'
 import { isQueueableFailure, maybeCreatedMessage } from '../../shared/error-classify'
 import { isTimeBlock } from '../../shared/time-blocks'
 import type { ApiResult } from '../api-result'
@@ -47,12 +47,19 @@ export interface QuickEntryTaskInput {
   priority?: number
   repeatAfter?: number
   repeatMode?: number
+  /**
+   * The reminder picked in the box's toolbar: 0 is "at the due time", a negative number is that
+   * long before, null is "no reminder" (which also keeps the default one away). Absent means the
+   * user did not pick one, so the default reminder applies.
+   */
+  reminder?: { offset: number | null }
 }
 
 /**
- * The create payload of a Quick Entry task: the fields the window read from the text, plus the
- * default reminder when it has a due date (src/shared/default-reminder.ts; Quick Entry has no
- * reminder picker). A queued create keeps the reminder, because the queue stores this payload.
+ * The create payload of a Quick Entry task: the fields read from the text, the reminder picked in
+ * the toolbar, and otherwise the default reminder for a task with a due date
+ * (src/shared/default-reminder.ts). A queued create keeps the reminder, because the queue stores
+ * this payload.
  */
 export function quickEntryTaskPayload(input: QuickEntryTaskInput, settings: DefaultReminderSettings | null): Record<string, unknown> {
   const payload: Record<string, unknown> = { title: input.title }
@@ -65,7 +72,31 @@ export function quickEntryTaskPayload(input: QuickEntryTaskInput, settings: Defa
   if (input.priority && input.priority > 0) payload.priority = input.priority
   if (input.repeatAfter !== undefined) payload.repeat_after = input.repeatAfter
   if (input.repeatMode !== undefined) payload.repeat_mode = input.repeatMode
+
+  // 工具栏上选过提醒就以它为准：默认提醒不会再插一条，选「不提醒」时也不会。
+  if (input.reminder) {
+    const reminder = reminderAtOffset(input.dueDate, input.reminder.offset, payload)
+    if (reminder) payload.reminders = [reminder]
+    return payload
+  }
   return withDefaultReminder(payload, settings)
+}
+
+/**
+ * 工具栏上那个提醒选项换成创建负载要的形状：0 是到期时（buildDefaultReminder 的 -1），
+ * 负数是提前多少秒（取正）。没有到期时间就没有落点，返回 null。
+ */
+function reminderAtOffset(
+  dueDate: string | null,
+  offsetSeconds: number | null,
+  payload: Record<string, unknown>,
+): ReturnType<typeof buildDefaultReminder> {
+  if (offsetSeconds === null || !dueDate) return null
+  const start = typeof payload.start_date === 'string' ? payload.start_date : null
+  const end = typeof payload.end_date === 'string' ? payload.end_date : null
+  const block = start && end && isTimeBlock(start, end) ? { start, end } : null
+  const seconds = offsetSeconds === 0 ? -1 : -offsetSeconds
+  return buildDefaultReminder(dueDate, seconds, 'due_date', block)
 }
 
 /**

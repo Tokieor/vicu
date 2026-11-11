@@ -795,6 +795,18 @@
   "Quick add task": "快速添加任务",
   "Quick add task shortcut": "快速添加任务快捷键",
   "Shortcut (works anywhere)": "快捷键（在任何窗口中都有效）",
-  "Press it anywhere to pop up just the task box — date, reminder, priority, labels, project, notes and attachments — with nothing else on screen.": "在任意位置按下，只弹出这个任务输入框 —— 日期、提醒、优先级、标签、项目、备注和附件 —— 屏幕上不会出现其他界面。",
-  "Click anywhere outside the box and it closes at once. When the main window is already in front, the shortcut opens the new-task composer there instead. Clear it to turn the shortcut off.": "点击输入框以外的任意位置，窗口立即关闭。若主窗口已经在前台，快捷键会直接在主窗口里打开新建任务输入框。清空即可关闭该快捷键。"
+  "Press it anywhere to pop up just the task box — date, reminder, priority, labels, project, notes and attachments — with nothing else on screen.": "在任意位置按下，只弹出这个任务输入框 —— 日期、提醒、优先级、标签、项目、备注和附加 —— 屏幕上不会出现其他界面。",
+  "Click anywhere outside the box and it closes at once. When the main window is already in front, the shortcut opens the new-task composer there instead. Clear it to turn the shortcut off.": "点击输入框以外的任意位置，窗口立即关闭。若主窗口已经在前台，快捷键会直接在主窗口里打开新建任务输入框。清空即可关闭该快捷键。",
+  "Description...": "描述……",
+  "saving to": "保存到",
+  "to link": "关联",
+  "Remove link": "移除关联",
+  "scheduling for Today": "安排到今天",
+  "Saved offline — will sync when connected": "已离线保存 —— 联网后自动同步",
+  "Task saved — labels and images will sync when connected": "任务已保存 —— 标签和图片将在联网后同步",
+  "{0} change(s) pending sync": "{0} 项变更待同步",
+  "{0} failed — open Vicu to review": "{0} 项失败 —— 打开 Vicu 查看",
+  "No reminder": "不提醒",
+  "Next Monday": "下周一",
+  "A reminder needs a due date.": "提醒需要一个到期时间。"
 }

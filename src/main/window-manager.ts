@@ -135,7 +135,12 @@ export function createQuickEntryWindow(_config: AppConfig | null): BrowserWindow
     hasShadow: false,
     alwaysOnTop: true,
     skipTaskbar: true,
-    resizable: false,
+    // 高度要跟着内容走（工具栏下拉、备注、图片都会把它撑高），收起时还要能缩回去。
+    // Windows 上不可缩放的窗口最小轨迹尺寸就是当前尺寸，setSize 只能变大不能变小；
+    // 放开缩放、再用最小/最大高度限定范围，宽度仍由 setSize 固定为设计值。
+    resizable: true,
+    minHeight: 80 + SHADOW_PADDING * 2,
+    maxHeight: 760 + SHADOW_PADDING * 2,
     roundedCorners: false,
     show: false,
     paintWhenInitiallyHidden: true,

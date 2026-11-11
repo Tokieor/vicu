@@ -209,18 +209,166 @@ body {
   vertical-align: middle;
 }
 
-/* Hints row (TAB hint + today hint inline) */
-.hints-row {
+/* The title row: the input and its send button (card 4.1; the composer's send button) */
+.task-row {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 2px 20px 8px;
+  gap: 8px;
+  padding-right: 16px;
 }
 
-/* Description hint */
-.description-hint {
+.task-row .input-wrapper {
+  flex: 1;
+  min-width: 0;
+}
+
+.send-button {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  cursor: pointer;
+  transition: opacity var(--dur-fade-fast) var(--ease-standard);
+}
+
+.send-button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* Toolbar — the same buttons as the new-task composer (date, reminder, priority, labels,
+ * project, notes, attachments), so the box can set them without typing them. */
+.task-toolbar {
+  -webkit-app-region: no-drag;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 0 16px 8px 16px;
+}
+
+.tool-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 132px;
+  padding: 4px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--dur-fade-fast) var(--ease-standard), color var(--dur-fade-fast) var(--ease-standard);
+}
+
+.tool-button:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* A set value reads like the composer's active button: accent text, nothing louder. */
+.tool-button.active {
+  color: var(--accent-blue);
+}
+
+.tool-button.active .tool-icon {
+  color: var(--accent-blue);
+}
+
+.tool-icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+}
+
+.tool-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* The list a toolbar button opens. It sits in the flow under the toolbar, so the window grows with
+ * it instead of clipping a floating panel. */
+.tool-popover {
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px 8px 8px;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.tool-popover-title {
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tool-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tool-option:hover {
+  background: var(--bg-hover);
+}
+
+.tool-option.selected {
+  color: var(--accent-blue);
+  font-weight: 500;
+}
+
+.tool-option-hint {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.tool-option-empty {
+  padding: 6px 12px;
   font-size: 12px;
   color: var(--text-secondary);
+}
+
+.tool-check {
+  width: 12px;
+  flex-shrink: 0;
+  color: var(--accent-blue);
+}
+
+/* Hints row (today hint inline; the TAB hint is the notes button now). No padding of its own:
+ * the row is in the flow even when the hint inside it is hidden. */
+.hints-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.hints-row:has(.today-hint.hidden) {
+  display: none;
+}
+
+#today-hint-inline {
+  padding: 0 20px 8px;
 }
 
 /* Today scheduling hint */
@@ -500,6 +648,15 @@ button:focus-visible {
 @media (prefers-color-scheme: dark) {
   .drag-handle-pill {
     background: rgba(255, 255, 255, 0.2);
+  }
+
+  .tool-popover {
+    border-top-color: rgba(255, 255, 255, 0.06);
+  }
+
+  .tool-button.active,
+  .tool-button.active .tool-icon {
+    color: #60a5fa;
   }
 
   .container {

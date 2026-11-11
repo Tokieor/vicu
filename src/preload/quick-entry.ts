@@ -9,6 +9,8 @@ interface QueuedCreateExtras {
   location?: { place: string; trigger: 'arrive' | 'leave' }
   /** The time block `for 30m` made; part of the create. */
   block?: { start_date: string; end_date: string } | null
+  /** 工具栏里选的提醒：0 到期时、负数为提前多久、null 为不提醒；缺省交给默认提醒。 */
+  reminder?: { offset: number | null }
 }
 
 // Page callbacks only ever receive the payload. The IpcRendererEvent carries
@@ -63,5 +65,9 @@ contextBridge.exposeInMainWorld('quickEntryApi', {
     url: string; title: string; displayTitle: string; mode: 'ask' | 'always'
   } | null) => void) => {
     ipcRenderer.on('browser-context', (_event, context) => callback(context))
+  },
+  // 语言在设置里换掉后通知小窗，它自己重新载入页面换语言（DOM 级翻译只有一次机会）。
+  onLocaleChanged: (callback: () => void) => {
+    ipcRenderer.on('locale-changed', () => callback())
   },
 })

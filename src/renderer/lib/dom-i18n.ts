@@ -4,11 +4,13 @@
 // 各处逻辑里。这里按「节点文本 / 几个可读属性」查同一份字典，命中就替换，
 // 英文模式下 t() 原样返回 key，等于什么都不做。
 //
-// 只处理文本节点与 placeholder/title/aria-label，input、textarea、contenteditable
-// 一律跳过，用户输入的内容不会被碰到。
+// 只处理文本节点与 placeholder/title/aria-label，文本节点不进 input、textarea、contenteditable
+// （用户输入的内容不会被碰到）；placeholder 恰好长在这两个标签上，所以它们的属性要单独翻。
 import { hasTranslation, t } from '../../shared/i18n'
 
 const SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'TEXTAREA', 'INPUT', 'CODE', 'PRE'])
+// 输入框里的文字是用户的，可它们的 placeholder 是界面的：属性照翻，文本节点不碰。
+const ATTRIBUTE_ONLY_TAGS = new Set(['TEXTAREA', 'INPUT'])
 const TEXT_ATTRIBUTES = ['placeholder', 'title', 'aria-label']
 
 const WHITESPACE = /\s+/g
@@ -30,7 +32,7 @@ function translateTextNode(node: Text): void {
 }
 
 function translateElement(element: Element): void {
-  if (SKIP_TAGS.has(element.tagName)) return
+  if (SKIP_TAGS.has(element.tagName) && !ATTRIBUTE_ONLY_TAGS.has(element.tagName)) return
   if (element.getAttribute('contenteditable') === 'true') return
   for (const attribute of TEXT_ATTRIBUTES) {
     const value = element.getAttribute(attribute)
@@ -50,6 +52,11 @@ function translateTree(root: Node): void {
   if (root.nodeType !== Node.ELEMENT_NODE && root.nodeType !== Node.DOCUMENT_FRAGMENT_NODE) return
   if (root.nodeType === Node.ELEMENT_NODE) {
     const element = root as Element
+    // 输入框只翻属性，不进它的子节点（那里是用户输入的值）
+    if (ATTRIBUTE_ONLY_TAGS.has(element.tagName)) {
+      translateElement(element)
+      return
+    }
     if (SKIP_TAGS.has(element.tagName)) return
     translateElement(element)
   }
