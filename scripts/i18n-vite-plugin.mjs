@@ -38,6 +38,7 @@ const TEXT_ATTRIBUTES = new Set([
   'aria-description',
   'alt',
   'label',
+  'tip',
   'unsetLabel',
   'unsetName',
   'heading',

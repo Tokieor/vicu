@@ -2,6 +2,8 @@
 // its tasks. The done count comes from the main process (one cheap request per project, carriers
 // excluded); the open count is read off the open tasks the sidebar already holds.
 
+import { t } from '@/lib/i18n'
+
 export interface ProjectProgress {
   done: number
   total: number
@@ -30,7 +32,7 @@ export function projectProgress(done: number | undefined, open: number | undefin
 
 /** What assistive technology reads for a ring: "3 of 8 done". */
 export function progressLabel(progress: ProjectProgress): string {
-  return `${progress.done} of ${progress.total} done`
+  return t('{0} of {1} done', progress.done, progress.total)
 }
 
 /**
@@ -44,5 +46,5 @@ export function shownOpenCount(openCounts: ReadonlyMap<number, number> | null, p
 
 /** What assistive technology reads for a count: "1 open task", "3 open tasks". */
 export function openTaskCountLabel(count: number): string {
-  return `${count} open ${count === 1 ? 'task' : 'tasks'}`
+  return count === 1 ? t('1 open task') : t('{0} open tasks', count)
 }

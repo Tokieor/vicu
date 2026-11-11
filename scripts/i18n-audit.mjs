@@ -44,7 +44,7 @@ let filesChanged = 0
 
 const ATTRS = new Set([
   'placeholder', 'title', 'aria-label', 'aria-placeholder', 'aria-description', 'alt',
-  'label', 'unsetLabel', 'unsetName', 'heading', 'subtitle', 'description',
+  'label', 'tip', 'unsetLabel', 'unsetName', 'heading', 'subtitle', 'description',
   'emptyText', 'emptyTitle', 'emptySubtitle',
   'confirmLabel', 'secondaryLabel', 'cancelLabel', 'submitLabel', 'okLabel', 'actionLabel',
 ])

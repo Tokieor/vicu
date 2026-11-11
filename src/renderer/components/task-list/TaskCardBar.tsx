@@ -110,13 +110,17 @@ interface PropertyButtonProps {
 }
 
 function PropertyButton({ prop, name, value, unsetName, tip, shortcut, isSet, open, haspopup, buttonRef, onClick, unsetLabel, iconOnly, icon, children, className }: PropertyButtonProps) {
+  // name / unsetName / tip 都是属性名字面量（"Priority"、"Add reminder"…），
+  // 只在渲染期翻译：tooltip 与无障碍名称一起跟随语言，英文模式原样返回。
+  const label = t(name)
+  const unsetText = t(unsetName ?? name)
   return (
-    <Tooltip label={tip ?? name} shortcut={shortcut}>
+    <Tooltip label={tip ? t(tip) : label} shortcut={shortcut}>
       <button
         ref={buttonRef}
         type="button"
         data-prop={prop}
-        aria-label={isSet && value ? `${name}: ${value}` : !isSet && !iconOnly ? (unsetName ?? name) : name}
+        aria-label={isSet && value ? `${label}: ${value}` : !isSet && !iconOnly ? unsetText : label}
         aria-haspopup={haspopup}
         aria-expanded={haspopup ? open : undefined}
         onClick={onClick}
@@ -130,7 +134,7 @@ function PropertyButton({ prop, name, value, unsetName, tip, shortcut, isSet, op
         ) : (
           <>
             <Plus className="h-3 w-3" aria-hidden="true" />
-            <span>{unsetLabel}</span>
+            <span>{unsetLabel ? t(unsetLabel) : unsetLabel}</span>
           </>
         )}
       </button>
@@ -380,7 +384,10 @@ export function TaskCardBar({
  * shows until the pane is open.
  */
 function CommentsButton({ taskId, count, unread, open, onClick }: { taskId: number; count: number; unread: boolean; open: boolean; onClick: () => void }) {
-  const label = count === 0 ? 'Comments' : `Comments, ${count}${unread ? ', new' : ''}`
+  // 模板拼接，编译期不会处理，这里显式翻译（含「有新评论」后缀）。
+  const label = count === 0
+    ? t('Comments')
+    : t('Comments, {0}{1}', count, unread ? t(', new') : '')
   return (
     <Tooltip label="Comments" shortcut="Mod+Shift+C">
       <button

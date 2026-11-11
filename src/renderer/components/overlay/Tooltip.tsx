@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { computePosition, flip, offset, shift } from '@floating-ui/dom'
+import { t } from '@/lib/i18n'
 import { shortcutHint } from '@/lib/shortcut-hint'
 import { leaveAsGhost } from './leave-ghost'
 import { TOOLTIP_DELAY_MS, TOOLTIP_EDGE, TOOLTIP_GAP } from './tooltip-logic'
@@ -97,7 +98,9 @@ export function Tooltip({ label, shortcut, children }: TooltipProps) {
       onBlur={hide}
     >
       {children}
-      {open && anchorRef.current && <TooltipBubble id={id} anchor={anchorRef.current} label={label} shortcut={shortcut} />}
+      {/* 提示语在这里统一翻译：调用方常传运行时变量（属性名、成员名等），
+          编译期插桩够不到；t() 只翻字典命中的文案，用户数据原样返回。 */}
+      {open && anchorRef.current && <TooltipBubble id={id} anchor={anchorRef.current} label={t(label)} shortcut={shortcut} />}
     </span>
   )
 }
