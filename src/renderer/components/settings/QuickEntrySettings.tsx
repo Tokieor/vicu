@@ -4,19 +4,16 @@ import { api } from '@/lib/api'
 import { cn } from '@/lib/cn'
 import { HotkeyRecorder } from './HotkeyRecorder'
 import { useCustomLists } from '@/hooks/use-custom-lists'
+import { hotkeyFailureCopy } from '@/lib/hotkey-copy'
 import { isQuickEntryEnabled, isQuickViewEnabled, type AppConfig, type Project, type ViewerFilter } from '@/lib/vikunja-types'
 
 interface QuickEntrySettingsProps {
   config: AppConfig
   projects: Project[]
   onChange: (partial: Partial<AppConfig>) => void
-  hotkeyWarnings?: { entry: boolean; viewer: boolean; waylandLimited: boolean }
+  hotkeyWarnings?: { entry: boolean; viewer: boolean; wake: boolean; waylandLimited: boolean }
 }
 
-
-const HOTKEY_FAILURE_COPY = window.api.platform === 'linux'
-  ? 'Failed to register. On Wayland, Electron binds shortcuts through the desktop portal — accept the consent dialog if prompted, or use the workaround below.'
-  : 'Failed to register — hotkey may be in use by another application'
 
 export function QuickEntrySettings({ config, projects, onChange, hotkeyWarnings }: QuickEntrySettingsProps) {
   const { data: customLists = [] } = useCustomLists()
@@ -191,7 +188,7 @@ export function QuickEntrySettings({ config, projects, onChange, hotkeyWarnings 
                   />
                   {hotkeyWarnings?.entry === false && (
                     <p className="mt-1 text-xs text-status-today">
-                      {HOTKEY_FAILURE_COPY}
+                      {hotkeyFailureCopy()}
                     </p>
                   )}
                 </div>
@@ -315,7 +312,7 @@ export function QuickEntrySettings({ config, projects, onChange, hotkeyWarnings 
                   />
                   {hotkeyWarnings?.viewer === false && (
                     <p className="mt-1 text-xs text-status-today">
-                      {HOTKEY_FAILURE_COPY}
+                      {hotkeyFailureCopy()}
                     </p>
                   )}
                 </div>

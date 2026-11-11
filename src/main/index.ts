@@ -1,7 +1,7 @@
 import { app, BrowserWindow, globalShortcut, nativeTheme, powerMonitor, screen } from 'electron'
 import { createMainWindow, createQuickEntryWindow, createQuickViewWindow } from './window-manager'
 import { registerIpcHandlers } from './ipc-handlers'
-import { loadConfig, saveConfigQuietly, type AppConfig, DEFAULT_QUICK_ENTRY_HOTKEY, DEFAULT_QUICK_VIEW_HOTKEY } from './config'
+import { loadConfig, saveConfigQuietly, type AppConfig, DEFAULT_QUICK_ENTRY_HOTKEY, DEFAULT_QUICK_VIEW_HOTKEY, DEFAULT_WAKE_HOTKEY } from './config'
 import { isQuickEntryEnabled, isQuickViewEnabled } from '../shared/config-types'
 import { authManager } from './auth/auth-manager'
 import { createTray, destroyTray, hasTray, showTrayHint } from './tray'
@@ -27,9 +27,10 @@ import { syncCustomLists } from './custom-list-service'
 import { startSavedFilterImport } from './saved-filter-service'
 import { syncSyncedPrefs } from './synced-preferences'
 import { parseHiddenArg, shouldStartHidden } from './login-item-settings'
+import { sameAccelerator } from '../shared/hotkey-defaults'
 import { applyLaunchOnStartup } from './launch-on-startup'
 import { startupEnv } from './startup-env'
-import { buildShortcutStatus } from './shortcut-status'
+import { buildShortcutStatus, type ShortcutStatus } from './shortcut-status'
 import { handleTrusted } from './secure-ipc'
 import { cleanAttachmentTempDir } from './attachment-temp'
 import { registerWebSecurity } from './web-security'
@@ -318,6 +319,18 @@ function setViewerHeight(height: number): void {
   isResettingViewerHeight = false
 }
 
+// --- Main window reveal ---
+// 托盘「Show Vicu」、第二次启动和应用内全局快捷键都走这里：窗口被隐藏到托盘就显示，
+// 被最小化就还原，已经被关掉（托盘还留着，例如快速录入在跑）就重新建一个。
+function revealMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    mainWindow = createAndWireMainWindow(loadConfig())
+  }
+  mainWindow.show()
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.focus()
+}
+
 // --- Shortcut registration ---
 // Latest global-shortcut registration state. Surfaced to the renderer via the
 // `get-global-shortcut-status` IPC so Settings can show a warning banner when
@@ -332,23 +345,36 @@ const isWaylandSession = isLinux && (
   process.env.XDG_SESSION_TYPE === 'wayland' || !!process.env.WAYLAND_DISPLAY
 )
 
-let lastShortcutStatus: { entry: boolean; viewer: boolean; waylandLimited: boolean } = {
+let lastShortcutStatus: ShortcutStatus = {
   entry: false,
   viewer: false,
+  wake: false,
   waylandLimited: false,
 }
 
-function registerQuickEntryShortcuts(config: AppConfig): { entry: boolean; viewer: boolean; waylandLimited: boolean } {
+/** 唤醒快捷键当前是否开着：空字符串（或缺失）表示用户关掉了它。 */
+function wakeHotkeyOf(config: AppConfig): string {
+  return config.wake_hotkey ?? DEFAULT_WAKE_HOTKEY
+}
+
+function registerQuickEntryShortcuts(config: AppConfig): ShortcutStatus {
   let entryRegistered = false
   let viewerRegistered = false
+  let wakeRegistered = false
   const entryEnabled = isQuickEntryEnabled(config)
   const viewerEnabled = isQuickViewEnabled(config)
+  const wakeHotkey = wakeHotkeyOf(config)
+  const wakeEnabled = wakeHotkey !== ''
+  // 已经注册成功的组合键：同一个 accelerator 注册两次，后一次会把前一次顶掉，
+  // 界面上却只看到「都保存了」。所以先记下来，冲突时宁可让唤醒失效也不抢别人的键。
+  const taken: string[] = []
 
   if (entryEnabled) {
     const entryHotkey = config.quick_entry_hotkey || DEFAULT_QUICK_ENTRY_HOTKEY
     try {
       entryRegistered = globalShortcut.register(entryHotkey, toggleQuickEntry)
-      if (!entryRegistered) console.error(`Failed to register Quick Entry shortcut: ${entryHotkey}`)
+      if (entryRegistered) taken.push(entryHotkey)
+      else console.error(`Failed to register Quick Entry shortcut: ${entryHotkey}`)
     } catch (err) {
       console.error(`Error registering entry shortcut "${entryHotkey}":`, err)
     }
@@ -358,9 +384,29 @@ function registerQuickEntryShortcuts(config: AppConfig): { entry: boolean; viewe
     const viewerHotkey = config.quick_view_hotkey || DEFAULT_QUICK_VIEW_HOTKEY
     try {
       viewerRegistered = globalShortcut.register(viewerHotkey, toggleQuickView)
-      if (!viewerRegistered) console.error(`Failed to register Quick View shortcut: ${viewerHotkey}`)
+      if (viewerRegistered) taken.push(viewerHotkey)
+      else console.error(`Failed to register Quick View shortcut: ${viewerHotkey}`)
     } catch (err) {
       console.error(`Error registering viewer shortcut "${viewerHotkey}":`, err)
+    }
+  }
+
+  // 唤醒快捷键：无论快速录入/查看是否开启都要注册——窗口被最小化或收进托盘时，
+  // 它就是唯一的入口。注册失败（被别的程序占用）由状态里的 wake=false 反馈给设置页。
+  if (wakeEnabled) {
+    const clash = taken.find((accelerator) => sameAccelerator(accelerator, wakeHotkey))
+    if (clash) {
+      console.error(`The wake shortcut "${wakeHotkey}" is already used by another Vicu shortcut; not registering it`)
+    } else {
+      try {
+        // 重复注册（同一组合键的旧绑定还在，例如快捷键刚被改过）先解绑，
+        // 否则 register 可能返回 true 却留着旧的回调。
+        if (globalShortcut.isRegistered(wakeHotkey)) globalShortcut.unregister(wakeHotkey)
+        wakeRegistered = globalShortcut.register(wakeHotkey, revealMainWindow)
+        if (!wakeRegistered) console.error(`Failed to register wake shortcut: ${wakeHotkey}`)
+      } catch (err) {
+        console.error(`Error registering wake shortcut "${wakeHotkey}":`, err)
+      }
     }
   }
 
@@ -370,6 +416,8 @@ function registerQuickEntryShortcuts(config: AppConfig): { entry: boolean; viewe
     entryRegistered,
     viewerRegistered,
     isWaylandSession,
+    wakeEnabled,
+    wakeRegistered,
   })
   lastShortcutStatus = result
   return result
@@ -463,14 +511,7 @@ function wantsTray(config: AppConfig | null): boolean {
 function setupTray(): void {
   if (hasTray()) return
   createTray({
-    onShowMainWindow: () => {
-      if (!mainWindow || mainWindow.isDestroyed()) {
-        mainWindow = createAndWireMainWindow(loadConfig())
-      }
-      mainWindow.show()
-      if (mainWindow.isMinimized()) mainWindow.restore()
-      mainWindow.focus()
-    },
+    onShowMainWindow: () => revealMainWindow(),
     onHideMainWindow: () => {
       if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide()
     },
@@ -579,15 +620,17 @@ function applyStartupSettings(config: AppConfig): void {
 }
 
 // Apply quick entry settings (called from IPC when settings change)
-function applyQuickEntrySettings(): { entry: boolean; viewer: boolean; waylandLimited: boolean } {
+function applyQuickEntrySettings(): ShortcutStatus {
   const config = loadConfig()
   if (!config) {
-    const empty = { entry: false, viewer: false, waylandLimited: false }
+    const empty: ShortcutStatus = { entry: false, viewer: false, wake: false, waylandLimited: false }
     lastShortcutStatus = empty
     return empty
   }
 
-  // Unregister existing shortcuts
+  // Unregister existing shortcuts: the patch may have changed any of the three
+  // accelerators, and re-registering on top of a stale binding would leave the
+  // old callback (or the old key) in place.
   globalShortcut.unregisterAll()
 
   const eitherEnabled = isQuickEntryEnabled(config) || isQuickViewEnabled(config)
@@ -595,7 +638,6 @@ function applyQuickEntrySettings(): { entry: boolean; viewer: boolean; waylandLi
   if (eitherEnabled) {
     setupTray()
     initQuickEntryWindows(config)
-    const result = registerQuickEntryShortcuts(config)
 
     // Clean up windows that were disabled
     if (!isQuickEntryEnabled(config) && quickEntryWindow && !quickEntryWindow.isDestroyed()) {
@@ -606,9 +648,6 @@ function applyQuickEntrySettings(): { entry: boolean; viewer: boolean; waylandLi
       quickViewWindow.destroy()
       quickViewWindow = null
     }
-
-    applyStartupSettings(config)
-    return result
   } else {
     // Clean up all windows; the tray stays if "Close to tray" still needs it.
     if (quickEntryWindow && !quickEntryWindow.isDestroyed()) {
@@ -626,10 +665,12 @@ function applyQuickEntrySettings(): { entry: boolean; viewer: boolean; waylandLi
     }
   }
 
+  // The wake shortcut does not depend on Quick Entry / View being on: when the
+  // main window is minimized or hidden in the tray it is the way back, so it is
+  // always (re)registered here, whatever the patch touched.
+  const result = registerQuickEntryShortcuts(config)
   applyStartupSettings(config)
-  const empty = { entry: false, viewer: false, waylandLimited: false }
-  lastShortcutStatus = empty
-  return empty
+  return result
 }
 
 // Pin the app name so `app.getPath('userData')` resolves to ~/.config/vicu on
@@ -695,12 +736,7 @@ if (!gotLock) {
     }
     // A launch at login (--hidden) that finds Vicu already running must not raise the window.
     if (parseHiddenArg(argv)) return
-    if (!mainWindow || mainWindow.isDestroyed()) {
-      mainWindow = createAndWireMainWindow(loadConfig())
-    }
-    mainWindow.show()
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.focus()
+    revealMainWindow()
   })
 
   // Allow self-signed certs for Obsidian Local REST API (localhost only)
@@ -849,9 +885,10 @@ if (!gotLock) {
     // Require config to be non-null: on first launch loadConfig() returns null, and
     // initQuickEntryWindows(null) would throw before the user finished setup.
     if (config && wantsTray(config)) setupTray()
-    if (config && (isQuickEntryEnabled(config) || isQuickViewEnabled(config))) {
-      initQuickEntryWindows(config)
+    if (config && (isQuickEntryEnabled(config) || isQuickViewEnabled(config))) initQuickEntryWindows(config)
+    if (config) {
       globalShortcut.unregisterAll() // Clear stale registrations from crashes
+      // Includes the global wake shortcut, which is independent of Quick Entry / View.
       registerQuickEntryShortcuts(config)
     }
     // Once per start, whatever Quick Entry/View are set to: re-asserts the login item (path, the

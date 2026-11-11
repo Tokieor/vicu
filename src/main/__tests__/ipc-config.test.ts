@@ -31,6 +31,8 @@ vi.mock('../api-client', () => ({ checkUploadSize: vi.fn() }))
 vi.mock('../quick-entry-state', () => ({
   getQuickViewWindow: () => ({ isDestroyed: () => false, webContents: { send: hoisted.viewerSend } }),
   getMainWindow: () => null,
+  // 保存连接后主进程会重绑全局快捷键（唤醒快捷键的默认值要立刻生效）。
+  applyQuickEntrySettings: () => ({ entry: false, viewer: false, wake: false, waylandLimited: false }),
 }))
 vi.mock('../quick-entry/viewer-caches', () => ({ invalidateViewerCaches: () => undefined, activeProjects: {}, projectListViewIds: {} }))
 vi.mock('../offline/ipc', () => ({ registerOfflineQueueIpc: () => undefined }))

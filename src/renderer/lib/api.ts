@@ -309,10 +309,10 @@ export const api = {
     window.api.refreshRoutineReminders() as Promise<void>,
 
   applyQuickEntrySettings: () =>
-    window.api.applyQuickEntrySettings() as Promise<{ entry: boolean; viewer: boolean; waylandLimited: boolean }>,
+    window.api.applyQuickEntrySettings() as Promise<{ entry: boolean; viewer: boolean; wake: boolean; waylandLimited: boolean }>,
 
   getGlobalShortcutStatus: () =>
-    window.api.getGlobalShortcutStatus() as Promise<{ entry: boolean; viewer: boolean; waylandLimited: boolean }>,
+    window.api.getGlobalShortcutStatus() as Promise<{ entry: boolean; viewer: boolean; wake: boolean; waylandLimited: boolean }>,
   getSecretStorageStatus: () =>
     window.api.getSecretStorageStatus() as Promise<'encrypted' | 'obfuscated' | 'plaintext'>,
   getLaunchOnStartupSupport: () =>

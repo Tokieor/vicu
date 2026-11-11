@@ -234,9 +234,9 @@ const api = {
 
   // Quick Entry settings
   applyQuickEntrySettings: () =>
-    ipcRenderer.invoke('apply-quick-entry-settings') as Promise<{ entry: boolean; viewer: boolean; waylandLimited: boolean }>,
+    ipcRenderer.invoke('apply-quick-entry-settings') as Promise<{ entry: boolean; viewer: boolean; wake: boolean; waylandLimited: boolean }>,
   getGlobalShortcutStatus: () =>
-    ipcRenderer.invoke('get-global-shortcut-status') as Promise<{ entry: boolean; viewer: boolean; waylandLimited: boolean }>,
+    ipcRenderer.invoke('get-global-shortcut-status') as Promise<{ entry: boolean; viewer: boolean; wake: boolean; waylandLimited: boolean }>,
   getSecretStorageStatus: () =>
     ipcRenderer.invoke('get-secret-storage-status') as Promise<'encrypted' | 'obfuscated' | 'plaintext'>,
   getLaunchOnStartupSupport: () =>

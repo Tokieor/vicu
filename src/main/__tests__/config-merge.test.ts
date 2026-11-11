@@ -13,6 +13,7 @@ import {
   connectionKeysIn,
   isConnectionFields,
   normalizeConfig,
+  DEFAULT_WAKE_HOTKEY,
   type AppConfig,
   type ConnectionFields,
 } from '../config'
@@ -551,5 +552,19 @@ describe('voice shortcut', () => {
     const recorded = applyConfigPatch(userConfig(), { voice_hotkey: 'Alt+Shift+M' })
     expect(recorded.voice_hotkey).toBe('Alt+Shift+M')
     expect(applyConfigPatch(recorded, { voice_hotkey: '' }).voice_hotkey).toBe('')
+  })
+})
+
+describe('wake window shortcut', () => {
+  it('starts at the platform default, unlike the voice shortcut', () => {
+    expect(normalizeConfig({}).wake_hotkey).toBe(DEFAULT_WAKE_HOTKEY)
+    expect(normalizeConfig({ wake_hotkey: 42 }).wake_hotkey).toBe(DEFAULT_WAKE_HOTKEY)
+  })
+
+  it('keeps a recorded shortcut, and a cleared one stays off', () => {
+    expect(normalizeConfig({ wake_hotkey: 'Ctrl+Alt+W' }).wake_hotkey).toBe('Ctrl+Alt+W')
+    const recorded = applyConfigPatch(userConfig(), { wake_hotkey: 'Ctrl+Alt+W' })
+    expect(recorded.wake_hotkey).toBe('Ctrl+Alt+W')
+    expect(applyConfigPatch(recorded, { wake_hotkey: '' }).wake_hotkey).toBe('')
   })
 })

@@ -299,6 +299,11 @@ export interface AppConfig {
    * (docs/voice-input.md).
    */
   voice_hotkey?: string
+  /**
+   * 全局「唤醒主窗口」快捷键（Electron accelerator）。窗口最小化或已收起到托盘时按下它，
+   * 主窗口会被还原并置于前台；'' 表示关闭该快捷键。全局注册，在其他应用里也生效。
+   */
+  wake_hotkey?: string
   quick_entry_default_project_id?: number
   exclamation_today?: boolean
   project_cycle_modifier?: 'ctrl' | 'alt' | 'ctrl+alt'

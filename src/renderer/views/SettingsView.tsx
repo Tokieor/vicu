@@ -16,6 +16,7 @@ import { ObsidianSettings } from '@/components/settings/ObsidianSettings'
 import { BrowserSettings } from '@/components/settings/BrowserSettings'
 import { SecretStorageNotice } from '@/components/settings/SecretStorageNotice'
 import { KeyboardShortcuts } from '@/components/settings/KeyboardShortcuts'
+import { WakeSettings } from '@/components/settings/WakeSettings'
 import { VoiceSettings } from '@/components/settings/VoiceSettings'
 import { AssistantSettings } from '@/components/settings/AssistantSettings'
 import { NotificationSettings } from '@/components/settings/NotificationSettings'
@@ -69,7 +70,7 @@ export function SettingsView() {
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   // Linux can only autostart when the app knows its own executable (not in a development run).
   const [launchOnStartupSupported, setLaunchOnStartupSupported] = useState(true)
-  const [hotkeyWarnings, setHotkeyWarnings] = useState<{ entry: boolean; viewer: boolean; waylandLimited: boolean } | undefined>(undefined)
+  const [hotkeyWarnings, setHotkeyWarnings] = useState<{ entry: boolean; viewer: boolean; wake: boolean; waylandLimited: boolean } | undefined>(undefined)
 
   // Config as loaded, plus the edits made here. Used to render the controls only.
   const [fullConfig, setFullConfig] = useState<AppConfig | null>(null)
@@ -263,6 +264,9 @@ export function SettingsView() {
       {activeTab === 'shortcuts' ? (
         <div className={SETTINGS_COLUMN}>
           {fullConfig && <VoiceSettings config={fullConfig} onChange={handleQuickEntryChange} />}
+          {fullConfig && (
+            <WakeSettings config={fullConfig} onChange={handleQuickEntryChange} hotkeyWarnings={hotkeyWarnings} />
+          )}
           <KeyboardShortcuts />
         </div>
       ) : activeTab === 'projects' ? (

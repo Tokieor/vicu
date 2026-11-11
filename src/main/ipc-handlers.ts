@@ -529,6 +529,9 @@ export function registerIpcHandlers(): void {
     // choice) is applied, so the choice is kept. Offline, the check runs when the user is learnt.
     await claimAccountDataFor(connection)
     persistConfig(applyConnectionFields(loadConfig(), connection))
+    // 首次配置（Setup / 登录）之后配置才存在，全局快捷键此时才该绑上：
+    // 之前 loadConfig() 是 null，启动阶段什么都没注册。
+    applyQuickEntrySettings()
     // A different server or user: changes queued for the previous account must not follow.
     accountChanged()
     void replayPendingActions()
