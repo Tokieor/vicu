@@ -1,3 +1,4 @@
+import { t } from '@/lib/i18n'
 import type { RefObject } from 'react'
 import { Check } from 'lucide-react'
 import { Popover, type PopoverCloseReason } from '../overlay/Popover'
@@ -46,7 +47,7 @@ export function PriorityPickerPopover({
           ) : (
             <span className="h-3.5 w-3.5 shrink-0" />
           )}
-          <span className="min-w-0 flex-1 truncate">{option.label}</span>
+          <span className="min-w-0 flex-1 truncate">{t(option.label)}</span>
           {option.value === currentPriority && (
             <Check className="h-3.5 w-3.5 shrink-0 text-[var(--accent-blue)]" />
           )}

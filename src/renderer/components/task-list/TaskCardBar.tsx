@@ -1,3 +1,4 @@
+import { t } from '@/lib/i18n'
 import { Fragment, useRef, type ReactNode, type RefObject } from 'react'
 import { Calendar, Bell, Repeat, Paperclip, ListChecks, FolderOpen, MoreHorizontal, Info, CopyPlus, FileText, Trash2, Plus, MessageSquare } from 'lucide-react'
 import { cn } from '@/lib/cn'
@@ -231,9 +232,9 @@ export function TaskCardBar({
         />
       )}
 
-      <PropertyButton prop="priority" name="Priority" value={mark?.name.replace(' priority', '')} isSet={!!mark} open={is('priority')} haspopup="listbox" buttonRef={priorityRef} onClick={() => onToggle('priority')} unsetLabel="Priority">
+      <PropertyButton prop="priority" name="Priority" value={t(mark?.name.replace(' priority', '') ?? '')} isSet={!!mark} open={is('priority')} haspopup="listbox" buttonRef={priorityRef} onClick={() => onToggle('priority')} unsetLabel="Priority">
         <PriorityMark priority={task.priority} decorative />
-        <span>{mark?.name.replace(' priority', '')}</span>
+        <span>{t(mark?.name.replace(' priority', '') ?? '')}</span>
       </PropertyButton>
       {is('priority') && <PriorityPickerPopover anchorRef={priorityRef} currentPriority={task.priority} onPriorityChange={onPriorityChange} onClose={onClose} />}
 

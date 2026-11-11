@@ -671,5 +671,23 @@
   "Refresh": "刷新",
   "Reload window": "重新加载窗口",
   "Documentation": "文档",
-  "Speech": "语音"
+  "Speech": "语音",
+
+  "Date": "日期",
+  "Low": "低",
+  "Medium": "中",
+  "High": "高",
+  "Urgent": "紧急",
+  "Low priority": "低优先级",
+  "Medium priority": "中优先级",
+  "High priority": "高优先级",
+  "Urgent priority": "紧急优先级",
+  "{0} days ago": "{0} 天前",
+  "Date and repeat": "日期与重复",
+  "All clear": "全部完成",
+  "Send": "发送",
+  "Mention": "提及",
+  "Views": "视图",
+  "Tasks to plan from": "待安排的任务",
+  "Attach files. You can also paste or drop them here.": "附加文件，也可以粘贴或拖放到这里。"
 }

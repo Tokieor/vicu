@@ -1,3 +1,4 @@
+import { t } from '@/lib/i18n'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Info, X } from 'lucide-react'
 import { cn } from '@/lib/cn'
@@ -488,7 +489,7 @@ export function CustomListDialog({ open, list, onSave, onClose }: CustomListDial
                     : 'border-[var(--border-color)] text-[var(--text-secondary)] hover:border-[var(--text-secondary)]'
                 )}
               >
-                {p.label}
+                {t(p.label)}
               </button>
             ))}
           </div>

@@ -1,3 +1,4 @@
+import { t } from '@/lib/i18n'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouterState } from '@tanstack/react-router'
 import { Loader2, Mic, Sparkles, Trash2, X } from 'lucide-react'
@@ -576,7 +577,7 @@ function DraftCardView({ card, disabled, ws, newProjects }: DraftCardProps) {
             onChange={(e) => update({ priority: Number(e.target.value) || null })}
             className="bg-transparent text-chip"
           >
-            {PRIORITIES.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+            {PRIORITIES.map((p) => <option key={p.value} value={p.value}>{t(p.label)}</option>)}
           </select>
         </label>
 

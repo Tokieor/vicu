@@ -1,3 +1,4 @@
+import { t } from '@/lib/i18n'
 import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import { Bell, BellOff, Pencil, Trash2, X } from 'lucide-react'
 import { cn } from '@/lib/cn'
@@ -277,7 +278,7 @@ function CommentsThread({ task, access, me, onClose, focusComposer }: ThreadProp
               <Fragment key={group.key}>
                 {group.label && (
                   <li aria-hidden="true" className="flex items-center gap-2 pb-0.5 pt-2.5 text-caption text-text-secondary">
-                    {group.label}
+                    {t(group.label)}
                     <span className="vicu-hairline h-px flex-1 bg-border" />
                   </li>
                 )}

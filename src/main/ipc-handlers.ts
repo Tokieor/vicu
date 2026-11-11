@@ -2,6 +2,7 @@ import { shell, dialog, app, nativeTheme } from 'electron'
 import { handleTrusted } from './secure-ipc'
 import { tokenForConnectionTest } from './connection-test-token'
 import { isExternalAllowed } from './web-security-policy'
+import { isLocale, setLocale } from '../shared/i18n'
 import { readUploadAnswer } from '../shared/attachment-upload'
 import { isRiskyAttachment, sanitizeAttachmentFileName } from './attachment-safety'
 import { ensureAttachmentTempDir } from './attachment-temp'
@@ -283,6 +284,14 @@ export function registerIpcHandlers(): void {
   registerCollaborationIpc()
   registerVoiceIpc()
   registerAiIpc()
+
+  // 界面语言：渲染进程切换后通知主进程，应用菜单由 index.ts 订阅 setLocale 重建。
+  // 走 handleTrusted，和其余通道一样校验 sender。
+  handleTrusted('app:set-locale', (_event, locale: unknown) => {
+    if (!isLocale(locale)) return false
+    setLocale(locale)
+    return true
+  })
 
   // Tasks
   handleTrusted('fetch-tasks', (_event, params: Record<string, unknown>) => {

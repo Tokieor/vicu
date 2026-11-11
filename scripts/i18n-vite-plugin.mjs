@@ -27,7 +27,9 @@ const DICT_PATH = join(ROOT, 'src', 'shared', 'i18n', 'zh.ts')
 const IMPORT_SOURCE = '@/lib/i18n'
 const IDENT = '__vicu_t'
 
-// 会出现在界面上、内容为纯文案的属性名
+// 会出现在界面上、内容为纯文案的属性名。
+// label/unsetLabel/unsetName 也只处理「字典命中的字面量」，变量属性（option.label 等）不碰，
+// 避免把用户数据当文案翻译；这类交给源码里的渲染期 t() 处理。
 const TEXT_ATTRIBUTES = new Set([
   'placeholder',
   'title',
@@ -35,6 +37,15 @@ const TEXT_ATTRIBUTES = new Set([
   'aria-placeholder',
   'aria-description',
   'alt',
+  'label',
+  'unsetLabel',
+  'unsetName',
+  'heading',
+  'subtitle',
+  'description',
+  'emptyText',
+  'emptyTitle',
+  'emptySubtitle',
 ])
 
 // 对象字面量里承载界面文案的键（{ label: 'Today' } 这类内联选项表）

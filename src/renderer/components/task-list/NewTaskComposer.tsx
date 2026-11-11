@@ -1,3 +1,4 @@
+import { t } from '@/lib/i18n'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlignLeft,
@@ -90,7 +91,7 @@ function dateOnlyIso(date: Date): string {
 
 /** The date button's label: the weekday date, plus the time when the due date has one. */
 function shortDate(value: string, fmt: DateFormat): string {
-  if (!value || value === NULL_DATE) return 'Date'
+  if (!value || value === NULL_DATE) return t('Date')
   return formatDateChip(new Date(value), isDateOnly(value), new Date(), fmt)
 }
 
@@ -115,7 +116,7 @@ function ActionButton({ active, label, children, onClick, buttonRef, popup, expa
         'flex h-7 items-center gap-1 rounded-control px-2 text-[11px] transition-colors hover:bg-[var(--bg-hover)]',
         active ? 'bg-[var(--bg-selected)] text-[var(--accent-blue)]' : 'text-[var(--text-secondary)]',
       )}
-      title={label}
+      title={t(label)}
     >
       {children}
     </button>
@@ -200,7 +201,7 @@ export function NewTaskComposer({
   const effectiveRepeatAfter = fields.repeat?.repeat_after ?? 0
   const effectiveRepeatMode = fields.repeat?.repeat_mode ?? 0
   const selectedProjectTitle = projects?.flat.find((project) => project.id === fields.projectId)?.title ?? 'Project'
-  const priorityLabel = fields.priority > 0 ? PRIORITY_OPTIONS.find((option) => option.value === fields.priority)?.label ?? 'Priority' : 'Priority'
+  const priorityLabel = t(fields.priority > 0 ? PRIORITY_OPTIONS.find((option) => option.value === fields.priority)?.label ?? 'Priority' : 'Priority')
   const labelCount = new Set([...selectedLabelIds.map((id) => labels.find((label) => label.id === id)?.title.toLowerCase() ?? String(id)), ...(parsed?.labels ?? []).map((name) => name.toLowerCase())]).size
   useEffect(() => {
     if (!projectTouched) setSelectedProjectId(projectId)

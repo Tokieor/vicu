@@ -49,20 +49,23 @@ export function subscribeLocale(listener: (locale: Locale) => void): () => void 
 
 const PLACEHOLDER = /\{(\d+)\}/g
 
+/** 把 {0} {1} 回填成实际参数。英文模式也必须做，否则模板 key 会露出 "{0}" 字面量。 */
+function interpolate(template: string, args: unknown[]): string {
+  if (args.length === 0) return template
+  return template.replace(PLACEHOLDER, (whole, index: string) => {
+    const arg = args[Number(index)]
+    if (arg === undefined || arg === null) return whole
+    return String(arg)
+  })
+}
+
 /**
  * 翻译一段英文文案。字典没命中时原样返回，所以未翻译的文案会保持英文，
  * 不会出现空字符串或 undefined。
  */
 export function t(key: string, ...args: unknown[]): string {
-  if (current === 'en') return key
-  const hit = ZH[key]
-  if (hit === undefined) return key
-  if (args.length === 0) return hit
-  return hit.replace(PLACEHOLDER, (whole, index: string) => {
-    const arg = args[Number(index)]
-    if (arg === undefined || arg === null) return whole
-    return String(arg)
-  })
+  const template = current === 'en' ? key : (ZH[key] ?? key)
+  return interpolate(template, args)
 }
 
 /** 字典里是否有这条文案（设置页「语言」一项用它统计覆盖率时可用）。 */

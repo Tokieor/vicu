@@ -1,4 +1,4 @@
-import { app, BrowserWindow, globalShortcut, ipcMain, nativeTheme, powerMonitor, screen } from 'electron'
+import { app, BrowserWindow, globalShortcut, nativeTheme, powerMonitor, screen } from 'electron'
 import { createMainWindow, createQuickEntryWindow, createQuickViewWindow } from './window-manager'
 import { registerIpcHandlers } from './ipc-handlers'
 import { loadConfig, saveConfigQuietly, type AppConfig, DEFAULT_QUICK_ENTRY_HOTKEY, DEFAULT_QUICK_VIEW_HOTKEY } from './config'
@@ -17,7 +17,7 @@ import { checkForUpdates } from './update-checker'
 import { startUpdateChecks, type UpdateChecksHandle } from './update-schedule'
 import { isMac, isWindows, isLinux } from './platform'
 import { setupApplicationMenu } from './app-menu'
-import { isLocale, setLocale } from '../shared/i18n'
+import { setLocale, subscribeLocale } from '../shared/i18n'
 import { storeAPIToken, getAPIToken, API_TOKEN_NO_EXPIRY } from './auth/token-store'
 import { clearTaskBadge, reapplyTaskBadge } from './badge'
 import { replayPendingActions } from './sync'
@@ -692,15 +692,11 @@ if (!gotLock) {
     // instance gets here, so nothing else is using the folder.
     cleanAttachmentTempDir(app.getPath('temp'))
     // 菜单由主进程构建，语言得在这里先定一次：先跟随系统，等渲染进程起来
-    // 用保存的选择校正（见下面的 app:set-locale）。
+    // 用保存的选择校正（见 ipc-handlers.ts 的 app:set-locale）。
     setLocale(app.getLocale().toLowerCase().startsWith('zh') ? 'zh' : 'en')
     setupApplicationMenu(() => mainWindow)
-    ipcMain.handle('app:set-locale', (_event, locale: unknown) => {
-      if (!isLocale(locale)) return false
-      setLocale(locale)
-      setupApplicationMenu(() => mainWindow)
-      return true
-    })
+    // 语言一变就重建菜单；setLocale 由可信 IPC（handleTrusted）调用。
+    subscribeLocale(() => setupApplicationMenu(() => mainWindow))
     registerIpcHandlers()
     if (isWindows) prewarmForegroundCheck()
     // Don't block window creation on auth recovery (up to 15s offline).

@@ -1,3 +1,4 @@
+import { t } from '@/lib/i18n'
 import { useEffect, useId, useMemo, useRef, useState, type FocusEvent, type KeyboardEvent } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/cn'
@@ -177,7 +178,7 @@ export function WhenPanel({ value, onChange, now: nowProp }: WhenPanelProps) {
             onClick={() => apply(withDate(selected, choice.date), true)}
             className="flex min-h-7 items-center justify-between gap-2 rounded-control px-2 py-1 text-left text-meta text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
           >
-            <span>{choice.label}</span>
+            <span>{t(choice.label)}</span>
             <span className="text-[var(--text-secondary)]">{choice.hint}</span>
           </button>
         ))}

@@ -42,7 +42,11 @@ let hit = 0
 let total = 0
 let filesChanged = 0
 
-const ATTRS = new Set(['placeholder', 'title', 'aria-label', 'aria-placeholder', 'aria-description', 'alt'])
+const ATTRS = new Set([
+  'placeholder', 'title', 'aria-label', 'aria-placeholder', 'aria-description', 'alt',
+  'label', 'unsetLabel', 'unsetName', 'heading', 'subtitle', 'description',
+  'emptyText', 'emptyTitle', 'emptySubtitle',
+])
 
 for (const file of walk(RENDERER)) {
   const code = readFileSync(file, 'utf8')

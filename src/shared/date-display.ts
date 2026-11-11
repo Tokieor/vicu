@@ -1,4 +1,5 @@
 import { diffLocalDays, toLocalDate } from './due-dates'
+import { getLocale, t } from './i18n'
 
 // How a due date or a completion time is phrased (docs/cross-app-semantics-v1.md section 8,
 // pinned by the `dateDisplay` vectors of test-fixtures/cross-app-semantics-v1.json).
@@ -55,11 +56,18 @@ const NAMES = {
   ],
 }
 
+// 相对日期词在「访问时」才求值：这个模块被主进程和渲染进程共用，模块级常量包 t()
+// 只会在加载时求值一次，切换语言后不会变。英文模式下 t() 原样返回 key。
 const WORDS = {
-  today: 'Today',
-  yesterday: 'Yesterday',
-  tomorrow: 'Tomorrow',
-  daysAgo: (n: number) => `${n} days ago`,
+  get today() { return t('Today') },
+  get yesterday() { return t('Yesterday') },
+  get tomorrow() { return t('Tomorrow') },
+  daysAgo: (n: number) => t('{0} days ago', n),
+}
+
+/** 英文模式沿用契约里的 ", "；中文模式用全角逗号，避免「昨天, 19:30」这种夹生写法。 */
+function joinPhrase(day: string, rest: string): string {
+  return `${day}${getLocale() === 'zh' ? '，' : ', '}${rest}`
 }
 
 const PATTERNS: Record<'en-US' | 'en-GB', Pattern> = {
@@ -263,7 +271,7 @@ function weekdayDate(value: Date, now: Date, p: Phrases): string {
 }
 
 function withTime(day: string, value: Date, dateOnly: boolean, fmt: DateFormat, p: Phrases): string {
-  return dateOnly ? day : `${day}, ${p.time(value, fmt.hour12)}`
+  return dateOnly ? day : joinPhrase(day, p.time(value, fmt.hour12))
 }
 
 function rowDay(diff: number, value: Date, now: Date, p: Phrases): string {
@@ -278,9 +286,9 @@ function rowDay(diff: number, value: Date, now: Date, p: Phrases): string {
 
 /** Yesterday, today and tomorrow say the word and the date; any other day its weekday date. */
 function chipDay(diff: number, value: Date, now: Date, p: Phrases): string {
-  if (diff === -1) return `${WORDS.yesterday}, ${shortDate(value, now, p)}`
-  if (diff === 0) return `${WORDS.today}, ${shortDate(value, now, p)}`
-  if (diff === 1) return `${WORDS.tomorrow}, ${shortDate(value, now, p)}`
+  if (diff === -1) return joinPhrase(WORDS.yesterday, shortDate(value, now, p))
+  if (diff === 0) return joinPhrase(WORDS.today, shortDate(value, now, p))
+  if (diff === 1) return joinPhrase(WORDS.tomorrow, shortDate(value, now, p))
   return weekdayDate(value, now, p)
 }
 
@@ -351,7 +359,7 @@ export function formatBlockRange(start: Date, end: Date, fmt: DateFormat): strin
 export function formatBlockRow(start: Date, end: Date, now: Date, fmt: DateFormat): string {
   const range = formatBlockRange(start, end, fmt)
   const diff = calendarDiff(now, start)
-  return diff === 0 ? range : `${rowDay(diff, start, now, phrasesFor(fmt.locale))}, ${range}`
+  return diff === 0 ? range : joinPhrase(rowDay(diff, start, now, phrasesFor(fmt.locale)), range)
 }
 
 /**
@@ -361,7 +369,7 @@ export function formatBlockRow(start: Date, end: Date, now: Date, fmt: DateForma
  */
 export function formatAbsoluteDateTime(value: Date, fmt: DateFormat): string {
   const p = phrasesFor(fmt.locale)
-  return `${p.dayMonth(value, true)}, ${p.time(value, fmt.hour12)}`
+  return joinPhrase(p.dayMonth(value, true), p.time(value, fmt.hour12))
 }
 
 /** The short date with its year ("Jun 12, 2026", "12 Jun 2026"), for documents such as printouts. */

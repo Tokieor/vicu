@@ -1,3 +1,4 @@
+import { t } from '@/lib/i18n'
 import { useState, useRef, useMemo } from 'react'
 import type { PopoverCloseReason } from '../overlay/Popover'
 import {
@@ -187,7 +188,7 @@ export function TaskContextMenu({ fallbackTask, x, y, reorderable = false, onClo
           checked={tasks.every((t) => t.priority === option.value)}
           onSelect={() => actions.setPriority(option.value)}
         >
-          {option.label}
+          {t(option.label)}
         </MenuRadioItem>
       ))}
       {anyHasPriority && (

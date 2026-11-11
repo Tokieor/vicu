@@ -1,3 +1,4 @@
+import { t } from '@/lib/i18n'
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import { MapPin, X } from 'lucide-react'
 import type { Task, TaskReminder } from '@/lib/vikunja-types'
@@ -126,7 +127,7 @@ export function ReminderPickerPopover({ anchorRef, task, dueDate, reminders: con
               onClick={() => addRelativeReminder(p.offset)}
               className="rounded-control px-2 py-1.5 text-left text-xs text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
             >
-              {p.label}
+              {t(p.label)}
             </button>
           ))}
         </div>

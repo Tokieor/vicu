@@ -1,3 +1,4 @@
+import { t } from '@/lib/i18n'
 import { useMemo, useRef, useState } from 'react'
 import { CalendarDays, CalendarX2, ChevronDown, FolderOpen, Loader2, Sparkles } from 'lucide-react'
 import { cn } from '@/lib/cn'
@@ -148,7 +149,7 @@ export function WhenChoices({ value, onChange, suggested, pickerOpen, onPickerOp
           onClick={() => onChange(dateOnlyDue(choice.date))}
           className={pressed(quick?.id === choice.id)}
         >
-          {choice.label}
+          {t(choice.label)}
           <span className="text-caption text-[var(--text-secondary)]">{choice.hint}</span>
         </Button>
       ))}

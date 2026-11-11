@@ -1,3 +1,4 @@
+import { t } from '@/lib/i18n'
 import { useEffect, useMemo, useState } from 'react'
 import { useTasks } from '@/hooks/use-tasks'
 import { useProjects } from '@/hooks/use-projects'
@@ -121,7 +122,7 @@ export function UpcomingView() {
           const projectGroups = groupByProject(group.tasks, projects?.flat)
           return (
             <div key={group.key}>
-              <ListSectionHeader level={1} title={group.label} count={openCount(group.tasks)} />
+              <ListSectionHeader level={1} title={t(group.label)} count={openCount(group.tasks)} />
               {projectGroups.map((pg) => (
                 <ProjectTaskGroup key={pg.name} level={2} name={pg.name} color={pg.color} tasks={pg.tasks} />
               ))}
