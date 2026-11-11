@@ -234,9 +234,9 @@ const api = {
 
   // Quick Entry settings
   applyQuickEntrySettings: () =>
-    ipcRenderer.invoke('apply-quick-entry-settings') as Promise<{ entry: boolean; viewer: boolean; wake: boolean; waylandLimited: boolean }>,
+    ipcRenderer.invoke('apply-quick-entry-settings') as Promise<{ entry: boolean; viewer: boolean; wake: boolean; add: boolean; waylandLimited: boolean }>,
   getGlobalShortcutStatus: () =>
-    ipcRenderer.invoke('get-global-shortcut-status') as Promise<{ entry: boolean; viewer: boolean; wake: boolean; waylandLimited: boolean }>,
+    ipcRenderer.invoke('get-global-shortcut-status') as Promise<{ entry: boolean; viewer: boolean; wake: boolean; add: boolean; waylandLimited: boolean }>,
   getSecretStorageStatus: () =>
     ipcRenderer.invoke('get-secret-storage-status') as Promise<'encrypted' | 'obfuscated' | 'plaintext'>,
   getLaunchOnStartupSupport: () =>
@@ -420,6 +420,12 @@ const api = {
     const handler = () => cb()
     ipcRenderer.on('new-task', handler)
     return () => { ipcRenderer.removeListener('new-task', handler) }
+  },
+  // 全局「快速添加任务」快捷键在主窗口已在前台时触发：在窗口内打开新建任务。
+  onQuickAddMain: (cb: () => void) => {
+    const handler = () => cb()
+    ipcRenderer.on('quick-add-main', handler)
+    return () => { ipcRenderer.removeListener('quick-add-main', handler) }
   },
   // View > Refresh (Mod+R): read the page again from the server.
   onRefreshView: (cb: () => void) => {

@@ -10,7 +10,7 @@ import type {
   ViewerFilter,
 } from '../shared/config-types'
 import { isCategoryId } from '../shared/project-categories'
-import { defaultWakeHotkey } from '../shared/hotkey-defaults'
+import { defaultQuickAddHotkey, defaultWakeHotkey } from '../shared/hotkey-defaults'
 import { todayRoutinesLimit } from '../shared/today-routines'
 
 // The config types are shared with the renderer (src/shared/config-types.ts).
@@ -28,6 +28,8 @@ export const DEFAULT_QUICK_ENTRY_HOTKEY = isMac ? 'Command+Shift+Space' : 'Alt+S
 export const DEFAULT_QUICK_VIEW_HOTKEY = isMac ? 'Command+Shift+B' : 'Alt+Shift+B'
 /** 全局「唤醒主窗口」快捷键；与渲染进程共用同一份定义（src/shared/hotkey-defaults.ts）。 */
 export const DEFAULT_WAKE_HOTKEY = defaultWakeHotkey(isMac)
+/** 「快速添加任务」快捷键，与唤醒键共用同一份定义。 */
+export const DEFAULT_QUICK_ADD_HOTKEY = defaultQuickAddHotkey(isMac)
 
 const CONFIG_FILENAME = 'config.json'
 
@@ -90,6 +92,10 @@ function readConfigFromDisk(): AppConfig | null {
     // 唤醒快捷键同理：Windows 的默认值（Alt+Shift+M）在 macOS 上按不出来。
     if (config.wake_hotkey === 'Alt+Shift+M') {
       config.wake_hotkey = DEFAULT_WAKE_HOTKEY
+      changed = true
+    }
+    if (config.quick_add_hotkey === 'Alt+Shift+N') {
+      config.quick_add_hotkey = DEFAULT_QUICK_ADD_HOTKEY
       changed = true
     }
     config.hotkeys_migrated_macos = true
@@ -177,6 +183,8 @@ export function normalizeConfig(raw: Record<string, unknown>): AppConfig {
     voice_hotkey: typeof raw.voice_hotkey === 'string' ? raw.voice_hotkey : '',
     // 全局唤醒快捷键：默认就有值（空字符串才是「关闭」），与快速录入/快速查看一致。
     wake_hotkey: typeof raw.wake_hotkey === 'string' ? raw.wake_hotkey : DEFAULT_WAKE_HOTKEY,
+    // 快速添加任务：同样默认就有值，空字符串表示用户关掉了它。
+    quick_add_hotkey: typeof raw.quick_add_hotkey === 'string' ? raw.quick_add_hotkey : DEFAULT_QUICK_ADD_HOTKEY,
     quick_entry_default_project_id: typeof raw.quick_entry_default_project_id === 'number'
       ? raw.quick_entry_default_project_id : undefined,
     exclamation_today: raw.exclamation_today !== false,

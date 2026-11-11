@@ -14,6 +14,7 @@ import {
   isConnectionFields,
   normalizeConfig,
   DEFAULT_WAKE_HOTKEY,
+  DEFAULT_QUICK_ADD_HOTKEY,
   type AppConfig,
   type ConnectionFields,
 } from '../config'
@@ -566,5 +567,19 @@ describe('wake window shortcut', () => {
     const recorded = applyConfigPatch(userConfig(), { wake_hotkey: 'Ctrl+Alt+W' })
     expect(recorded.wake_hotkey).toBe('Ctrl+Alt+W')
     expect(applyConfigPatch(recorded, { wake_hotkey: '' }).wake_hotkey).toBe('')
+  })
+})
+
+describe('quick add task shortcut', () => {
+  it('starts at the platform default, and survives a non-string value', () => {
+    expect(normalizeConfig({}).quick_add_hotkey).toBe(DEFAULT_QUICK_ADD_HOTKEY)
+    expect(normalizeConfig({ quick_add_hotkey: 42 }).quick_add_hotkey).toBe(DEFAULT_QUICK_ADD_HOTKEY)
+  })
+
+  it('keeps a recorded shortcut, and a cleared one stays off', () => {
+    expect(normalizeConfig({ quick_add_hotkey: 'Ctrl+Alt+A' }).quick_add_hotkey).toBe('Ctrl+Alt+A')
+    const recorded = applyConfigPatch(userConfig(), { quick_add_hotkey: 'Ctrl+Alt+A' })
+    expect(recorded.quick_add_hotkey).toBe('Ctrl+Alt+A')
+    expect(applyConfigPatch(recorded, { quick_add_hotkey: '' }).quick_add_hotkey).toBe('')
   })
 })

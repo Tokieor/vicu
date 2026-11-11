@@ -328,6 +328,7 @@ export interface ElectronAPI {
   onNavigate(cb: (path: string) => void): () => void
   onNavigateToTask(cb: (taskId: number) => void): () => void
   onNewTask(cb: () => void): () => void
+  onQuickAddMain(cb: () => void): () => void
   onRefreshView(cb: () => void): () => void
   onAppResumed(cb: () => void): () => void
   /** The locale and clock dates are phrased with (system locale, clock setting). */

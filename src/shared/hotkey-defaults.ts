@@ -14,6 +14,16 @@ export function defaultWakeHotkey(isMac: boolean): string {
 }
 
 /**
+ * 「快速添加任务」全局快捷键的默认值。
+ *
+ * 触发后只弹出快速录入小窗（输入框 + 日期/提醒/优先级等工具条），主窗口在前台时
+ * 则直接进入主窗口内的新建任务状态。用 N（new task）区分，与 V/B/M 不冲突。
+ */
+export function defaultQuickAddHotkey(isMac: boolean): string {
+  return isMac ? 'Command+Shift+N' : 'Alt+Shift+N'
+}
+
+/**
  * 两个 Electron accelerator 是否是同一个组合键。
  *
  * 用户录出来的顺序固定（Ctrl+Alt+Shift+Key），但配置文件可能被手改或由

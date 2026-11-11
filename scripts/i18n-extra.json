@@ -791,5 +791,10 @@
   "The key is registered with the system, so it works while another application is in front. If something else already uses it, pick another combination.": "该按键在系统层面注册，所以其他应用在前台时同样有效。若已被别的程序占用，请换一组组合键。",
   "This is also the {0} hotkey. Choose another.": "这也是「{0}」的快捷键，请换一个。",
   "Failed to register — hotkey may be in use by another application": "注册失败 —— 该快捷键可能已被其他应用占用",
-  "Failed to register. On Wayland, Electron binds shortcuts through the desktop portal — accept the consent dialog if prompted, or use the workaround below.": "注册失败。在 Wayland 上 Electron 通过桌面 portal 绑定快捷键 —— 若弹出授权对话框请接受，或使用下方给出的替代方案。"
+  "Failed to register. On Wayland, Electron binds shortcuts through the desktop portal — accept the consent dialog if prompted, or use the workaround below.": "注册失败。在 Wayland 上 Electron 通过桌面 portal 绑定快捷键 —— 若弹出授权对话框请接受，或使用下方给出的替代方案。",
+  "Quick add task": "快速添加任务",
+  "Quick add task shortcut": "快速添加任务快捷键",
+  "Shortcut (works anywhere)": "快捷键（在任何窗口中都有效）",
+  "Press it anywhere to pop up just the task box — date, reminder, priority, labels, project, notes and attachments — with nothing else on screen.": "在任意位置按下，只弹出这个任务输入框 —— 日期、提醒、优先级、标签、项目、备注和附件 —— 屏幕上不会出现其他界面。",
+  "Click anywhere outside the box and it closes at once. When the main window is already in front, the shortcut opens the new-task composer there instead. Clear it to turn the shortcut off.": "点击输入框以外的任意位置，窗口立即关闭。若主窗口已经在前台，快捷键会直接在主窗口里打开新建任务输入框。清空即可关闭该快捷键。"
 }

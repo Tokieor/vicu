@@ -1,7 +1,7 @@
 import { app, BrowserWindow, globalShortcut, nativeTheme, powerMonitor, screen } from 'electron'
 import { createMainWindow, createQuickEntryWindow, createQuickViewWindow } from './window-manager'
 import { registerIpcHandlers } from './ipc-handlers'
-import { loadConfig, saveConfigQuietly, type AppConfig, DEFAULT_QUICK_ENTRY_HOTKEY, DEFAULT_QUICK_VIEW_HOTKEY, DEFAULT_WAKE_HOTKEY } from './config'
+import { loadConfig, saveConfigQuietly, type AppConfig, DEFAULT_QUICK_ENTRY_HOTKEY, DEFAULT_QUICK_VIEW_HOTKEY, DEFAULT_WAKE_HOTKEY, DEFAULT_QUICK_ADD_HOTKEY } from './config'
 import { isQuickEntryEnabled, isQuickViewEnabled } from '../shared/config-types'
 import { authManager } from './auth/auth-manager'
 import { createTray, destroyTray, hasTray, showTrayHint } from './tray'
@@ -242,13 +242,50 @@ function toggleQuickEntry(): void {
   else showQuickEntry()
 }
 
+/**
+ * 「快速添加任务」全局快捷键。
+ *
+ * 两条分支：
+ *   - 主窗口就在前台：不另开小窗，直接让主窗口里的列表进入新建任务状态（等价于 Ctrl+N）；
+ *   - 其余情况（主窗口隐藏 / 最小化 / 被别的应用挡在后面）：只弹出快速录入小窗，
+ *     它自己失焦即关闭（initQuickEntryWindows 里挂了 blur）。
+ */
+function handleQuickAdd(): void {
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && mainWindow.isFocused()) {
+    // 单独一个事件：让渲染进程走「请求列表打开输入框，没人接就带去收件箱」的路径，
+    // 而不是复用菜单的 new-task（那个在没有列表的页面上会静默丢掉）。
+    mainWindow.webContents.send('quick-add-main')
+    return
+  }
+
+  // 快速录入功能可能没开，但「快速添加任务」需要这个窗口，所以按需创建。
+  const win = ensureQuickEntryWindow(loadConfig())
+  if (win.isVisible()) {
+    hideQuickEntry()
+    return
+  }
+  // 第一次创建时页面还在加载，先 show 会闪一片空白；等加载完再显示。
+  if (win.webContents.isLoading()) {
+    win.webContents.once('did-finish-load', () => {
+      if (quickEntryWindow === win && !win.isDestroyed() && !win.isVisible()) void showQuickEntry()
+    })
+    return
+  }
+  void showQuickEntry()
+}
+
+/** 快速录入窗口的设计宽度，与 window-manager 创建时的宽度一致；重排只改高度。 */
+const QUICK_ENTRY_WIDTH = 560 + SHADOW_PADDING * 2
+
 function setQuickEntryHeight(height: number): void {
   if (!quickEntryWindow || quickEntryWindow.isDestroyed()) return
   if (!quickEntryWindow.isVisible()) return
   const clamped = Math.max(80, Math.min(720, Math.round(height))) + SHADOW_PADDING * 2
-  const [currentWidth, currentHeight] = quickEntryWindow.getSize()
+  const [, currentHeight] = quickEntryWindow.getSize()
   if (Math.abs(currentHeight - clamped) <= 1) return
-  quickEntryWindow.setSize(currentWidth, clamped)
+  // 宽度取设计值，不从 getSize() 里拿：Windows 高 DPI 下 getSize() 可能返回物理像素，
+  // 再喂回 setSize() 会让窗口每重排一次就宽一圈（最后撑出屏幕）。
+  quickEntryWindow.setSize(QUICK_ENTRY_WIDTH, clamped)
 }
 
 // --- Quick View show/hide ---
@@ -349,6 +386,7 @@ let lastShortcutStatus: ShortcutStatus = {
   entry: false,
   viewer: false,
   wake: false,
+  add: false,
   waylandLimited: false,
 }
 
@@ -357,14 +395,26 @@ function wakeHotkeyOf(config: AppConfig): string {
   return config.wake_hotkey ?? DEFAULT_WAKE_HOTKEY
 }
 
+/** 「快速添加任务」快捷键：同样空字符串表示关闭。 */
+function quickAddHotkeyOf(config: AppConfig): string {
+  return config.quick_add_hotkey ?? DEFAULT_QUICK_ADD_HOTKEY
+}
+
+function isQuickAddEnabled(config: AppConfig | null | undefined): boolean {
+  return config != null && quickAddHotkeyOf(config) !== ''
+}
+
 function registerQuickEntryShortcuts(config: AppConfig): ShortcutStatus {
   let entryRegistered = false
   let viewerRegistered = false
   let wakeRegistered = false
+  let addRegistered = false
   const entryEnabled = isQuickEntryEnabled(config)
   const viewerEnabled = isQuickViewEnabled(config)
   const wakeHotkey = wakeHotkeyOf(config)
   const wakeEnabled = wakeHotkey !== ''
+  const addHotkey = quickAddHotkeyOf(config)
+  const addEnabled = addHotkey !== ''
   // 已经注册成功的组合键：同一个 accelerator 注册两次，后一次会把前一次顶掉，
   // 界面上却只看到「都保存了」。所以先记下来，冲突时宁可让唤醒失效也不抢别人的键。
   const taken: string[] = []
@@ -403,9 +453,29 @@ function registerQuickEntryShortcuts(config: AppConfig): ShortcutStatus {
         // 否则 register 可能返回 true 却留着旧的回调。
         if (globalShortcut.isRegistered(wakeHotkey)) globalShortcut.unregister(wakeHotkey)
         wakeRegistered = globalShortcut.register(wakeHotkey, revealMainWindow)
+        // 记下来，后面的「快速添加任务」撞上它时要让位（register 会把旧回调顶掉）。
+        if (wakeRegistered) taken.push(wakeHotkey)
         if (!wakeRegistered) console.error(`Failed to register wake shortcut: ${wakeHotkey}`)
       } catch (err) {
         console.error(`Error registering wake shortcut "${wakeHotkey}":`, err)
+      }
+    }
+  }
+
+  // 「快速添加任务」：和唤醒键一样与快速录入/查看的开关无关，永远注册——它就是
+  // 不打开主窗口时添加任务的入口。和别的快捷键撞车时同样让位。
+  if (addEnabled) {
+    const clash = taken.find((accelerator) => sameAccelerator(accelerator, addHotkey))
+    if (clash) {
+      console.error(`The quick add shortcut "${addHotkey}" is already used by another Vicu shortcut; not registering it`)
+    } else {
+      try {
+        if (globalShortcut.isRegistered(addHotkey)) globalShortcut.unregister(addHotkey)
+        addRegistered = globalShortcut.register(addHotkey, handleQuickAdd)
+        if (addRegistered) taken.push(addHotkey)
+        else console.error(`Failed to register quick add shortcut: ${addHotkey}`)
+      } catch (err) {
+        console.error(`Error registering quick add shortcut "${addHotkey}":`, err)
       }
     }
   }
@@ -418,6 +488,8 @@ function registerQuickEntryShortcuts(config: AppConfig): ShortcutStatus {
     isWaylandSession,
     wakeEnabled,
     wakeRegistered,
+    addEnabled,
+    addRegistered,
   })
   lastShortcutStatus = result
   return result
@@ -536,33 +608,51 @@ function syncTrayWithConfig(): void {
 }
 
 // --- Quick Entry/View initialization ---
+/**
+ * 创建快速录入小窗并挂上它的生命周期处理：关闭按钮 → 隐藏而不是退出，失焦 → 立即隐藏
+ * （点击窗口外的任何地方都会让窗口失焦），移动后记住位置。
+ *
+ * 「快速添加任务」按需创建窗口时也走这里，保证失焦关闭等行为完全一致。
+ */
+function ensureQuickEntryWindow(config: AppConfig | null): BrowserWindow {
+  if (quickEntryWindow && !quickEntryWindow.isDestroyed()) return quickEntryWindow
+
+  const win = createQuickEntryWindow(config)
+  quickEntryWindow = win
+  win.on('close', (e) => {
+    if (!appIsQuitting) {
+      e.preventDefault()
+      hideQuickEntry()
+    }
+  })
+  win.on('blur', () => {
+    if (quickEntryWindow?.isVisible() && Date.now() - quickEntryShowTime > BLUR_DEBOUNCE_MS) {
+      hideQuickEntry()
+    }
+  })
+  let entryMoveTimer: NodeJS.Timeout | null = null
+  win.on('move', () => {
+    if (entryMoveTimer) clearTimeout(entryMoveTimer)
+    entryMoveTimer = setTimeout(() => {
+      if (!quickEntryWindow || quickEntryWindow.isDestroyed()) return
+      const [x, y] = quickEntryWindow.getPosition()
+      const current = loadConfig()
+      if (current) {
+        current.quick_entry_position = { x, y }
+        saveConfigQuietly(current, 'the Quick Entry position')
+      }
+    }, 500)
+  })
+  return win
+}
+
+/**
+ * 「快速添加任务」窗口按需创建：没按过快捷键的用户不会多出一个隐藏窗口，
+ * 启动时的 initQuickEntryWindows 也不会为它建。
+ */
 function initQuickEntryWindows(config: AppConfig): void {
-  if (isQuickEntryEnabled(config) && !quickEntryWindow) {
-    quickEntryWindow = createQuickEntryWindow(config)
-    quickEntryWindow.on('close', (e) => {
-      if (!appIsQuitting) {
-        e.preventDefault()
-        hideQuickEntry()
-      }
-    })
-    quickEntryWindow.on('blur', () => {
-      if (quickEntryWindow?.isVisible() && Date.now() - quickEntryShowTime > BLUR_DEBOUNCE_MS) {
-        hideQuickEntry()
-      }
-    })
-    let entryMoveTimer: NodeJS.Timeout | null = null
-    quickEntryWindow.on('move', () => {
-      if (entryMoveTimer) clearTimeout(entryMoveTimer)
-      entryMoveTimer = setTimeout(() => {
-        if (!quickEntryWindow || quickEntryWindow.isDestroyed()) return
-        const [x, y] = quickEntryWindow.getPosition()
-        const current = loadConfig()
-        if (current) {
-          current.quick_entry_position = { x, y }
-          saveConfigQuietly(current, 'the Quick Entry position')
-        }
-      }, 500)
-    })
+  if (isQuickEntryEnabled(config)) {
+    ensureQuickEntryWindow(config)
   }
 
   if (isQuickViewEnabled(config) && !quickViewWindow) {
@@ -623,7 +713,7 @@ function applyStartupSettings(config: AppConfig): void {
 function applyQuickEntrySettings(): ShortcutStatus {
   const config = loadConfig()
   if (!config) {
-    const empty: ShortcutStatus = { entry: false, viewer: false, wake: false, waylandLimited: false }
+    const empty: ShortcutStatus = { entry: false, viewer: false, wake: false, add: false, waylandLimited: false }
     lastShortcutStatus = empty
     return empty
   }
@@ -633,6 +723,7 @@ function applyQuickEntrySettings(): ShortcutStatus {
   // old callback (or the old key) in place.
   globalShortcut.unregisterAll()
 
+  // 快速添加任务的窗口是按需创建的，不参与这里的「要不要建窗口」判断。
   const eitherEnabled = isQuickEntryEnabled(config) || isQuickViewEnabled(config)
 
   if (eitherEnabled) {
@@ -640,7 +731,7 @@ function applyQuickEntrySettings(): ShortcutStatus {
     initQuickEntryWindows(config)
 
     // Clean up windows that were disabled
-    if (!isQuickEntryEnabled(config) && quickEntryWindow && !quickEntryWindow.isDestroyed()) {
+    if (!isQuickEntryEnabled(config) && !isQuickAddEnabled(config) && quickEntryWindow && !quickEntryWindow.isDestroyed()) {
       quickEntryWindow.destroy()
       quickEntryWindow = null
     }
@@ -650,7 +741,8 @@ function applyQuickEntrySettings(): ShortcutStatus {
     }
   } else {
     // Clean up all windows; the tray stays if "Close to tray" still needs it.
-    if (quickEntryWindow && !quickEntryWindow.isDestroyed()) {
+    // 「快速添加任务」按需建的窗口留着：它没开 Quick Entry，但快捷键还要用这个窗口。
+    if (!isQuickAddEnabled(config) && quickEntryWindow && !quickEntryWindow.isDestroyed()) {
       quickEntryWindow.destroy()
       quickEntryWindow = null
     }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { defaultWakeHotkey, sameAccelerator } from '../hotkey-defaults'
+import { defaultQuickAddHotkey, defaultWakeHotkey, sameAccelerator } from '../hotkey-defaults'
 
 describe('defaultWakeHotkey', () => {
   it('uses the main modifier of each platform', () => {
@@ -10,6 +10,20 @@ describe('defaultWakeHotkey', () => {
   it('does not collide with the Quick Entry / Quick View defaults', () => {
     expect(sameAccelerator(defaultWakeHotkey(false), 'Alt+Shift+V')).toBe(false)
     expect(sameAccelerator(defaultWakeHotkey(false), 'Alt+Shift+B')).toBe(false)
+  })
+})
+
+describe('defaultQuickAddHotkey', () => {
+  it('uses the main modifier of each platform', () => {
+    expect(defaultQuickAddHotkey(false)).toBe('Alt+Shift+N')
+    expect(defaultQuickAddHotkey(true)).toBe('Command+Shift+N')
+  })
+
+  it('is distinct from the other global defaults on the same platform', () => {
+    expect(sameAccelerator(defaultQuickAddHotkey(false), defaultWakeHotkey(false))).toBe(false)
+    expect(sameAccelerator(defaultQuickAddHotkey(false), 'Alt+Shift+V')).toBe(false)
+    expect(sameAccelerator(defaultQuickAddHotkey(false), 'Alt+Shift+B')).toBe(false)
+    expect(sameAccelerator(defaultQuickAddHotkey(true), defaultWakeHotkey(true))).toBe(false)
   })
 })
 

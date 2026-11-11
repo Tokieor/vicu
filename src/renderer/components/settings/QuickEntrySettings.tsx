@@ -11,7 +11,7 @@ interface QuickEntrySettingsProps {
   config: AppConfig
   projects: Project[]
   onChange: (partial: Partial<AppConfig>) => void
-  hotkeyWarnings?: { entry: boolean; viewer: boolean; wake: boolean; waylandLimited: boolean }
+  hotkeyWarnings?: { entry: boolean; viewer: boolean; wake: boolean; add: boolean; waylandLimited: boolean }
 }
 
 

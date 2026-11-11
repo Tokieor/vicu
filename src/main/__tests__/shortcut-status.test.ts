@@ -11,7 +11,7 @@ describe('buildShortcutStatus', () => {
         viewerRegistered: true,
         isWaylandSession: true,
       })
-    ).toEqual({ entry: true, viewer: true, wake: false, waylandLimited: false })
+    ).toEqual({ entry: true, viewer: true, wake: false, add: false, waylandLimited: false })
   })
 
   it('flags waylandLimited when an enabled shortcut fails on Wayland', () => {
@@ -23,7 +23,7 @@ describe('buildShortcutStatus', () => {
         viewerRegistered: true,
         isWaylandSession: true,
       })
-    ).toEqual({ entry: false, viewer: true, wake: false, waylandLimited: true })
+    ).toEqual({ entry: false, viewer: true, wake: false, add: false, waylandLimited: true })
   })
 
   it('does not flag waylandLimited for failed registration outside Wayland', () => {
@@ -35,7 +35,7 @@ describe('buildShortcutStatus', () => {
         viewerRegistered: false,
         isWaylandSession: false,
       })
-    ).toEqual({ entry: false, viewer: false, wake: false, waylandLimited: false })
+    ).toEqual({ entry: false, viewer: false, wake: false, add: false, waylandLimited: false })
   })
 
   it('treats disabled shortcuts as not registered and not failures', () => {
@@ -47,7 +47,7 @@ describe('buildShortcutStatus', () => {
         viewerRegistered: false,
         isWaylandSession: true,
       })
-    ).toEqual({ entry: false, viewer: false, wake: false, waylandLimited: false })
+    ).toEqual({ entry: false, viewer: false, wake: false, add: false, waylandLimited: false })
   })
 
   it('flags waylandLimited for partial viewer failure only', () => {
@@ -59,7 +59,7 @@ describe('buildShortcutStatus', () => {
         viewerRegistered: false,
         isWaylandSession: true,
       })
-    ).toEqual({ entry: false, viewer: false, wake: false, waylandLimited: true })
+    ).toEqual({ entry: false, viewer: false, wake: false, add: false, waylandLimited: true })
   })
 
   it('reports the wake shortcut even when Quick Entry and View are off', () => {
@@ -73,7 +73,7 @@ describe('buildShortcutStatus', () => {
         wakeEnabled: true,
         wakeRegistered: true,
       })
-    ).toEqual({ entry: false, viewer: false, wake: true, waylandLimited: false })
+    ).toEqual({ entry: false, viewer: false, wake: true, add: false, waylandLimited: false })
   })
 
   it('treats a failed wake registration as a Wayland limitation too', () => {
@@ -87,7 +87,7 @@ describe('buildShortcutStatus', () => {
         wakeEnabled: true,
         wakeRegistered: false,
       })
-    ).toEqual({ entry: false, viewer: false, wake: false, waylandLimited: true })
+    ).toEqual({ entry: false, viewer: false, wake: false, add: false, waylandLimited: true })
   })
 
   it('does not treat a cleared wake shortcut as a failure', () => {
@@ -101,6 +101,48 @@ describe('buildShortcutStatus', () => {
         wakeEnabled: false,
         wakeRegistered: false,
       })
-    ).toEqual({ entry: false, viewer: false, wake: false, waylandLimited: false })
+    ).toEqual({ entry: false, viewer: false, wake: false, add: false, waylandLimited: false })
+  })
+
+  it('reports the quick add shortcut even when everything else is off', () => {
+    expect(
+      buildShortcutStatus({
+        entryEnabled: false,
+        viewerEnabled: false,
+        entryRegistered: false,
+        viewerRegistered: false,
+        isWaylandSession: false,
+        addEnabled: true,
+        addRegistered: true,
+      })
+    ).toEqual({ entry: false, viewer: false, wake: false, add: true, waylandLimited: false })
+  })
+
+  it('treats a failed quick add registration as a Wayland limitation too', () => {
+    expect(
+      buildShortcutStatus({
+        entryEnabled: false,
+        viewerEnabled: false,
+        entryRegistered: false,
+        viewerRegistered: false,
+        isWaylandSession: true,
+        addEnabled: true,
+        addRegistered: false,
+      })
+    ).toEqual({ entry: false, viewer: false, wake: false, add: false, waylandLimited: true })
+  })
+
+  it('does not treat a cleared quick add shortcut as a failure', () => {
+    expect(
+      buildShortcutStatus({
+        entryEnabled: false,
+        viewerEnabled: false,
+        entryRegistered: false,
+        viewerRegistered: false,
+        isWaylandSession: true,
+        addEnabled: false,
+        addRegistered: false,
+      })
+    ).toEqual({ entry: false, viewer: false, wake: false, add: false, waylandLimited: false })
   })
 })

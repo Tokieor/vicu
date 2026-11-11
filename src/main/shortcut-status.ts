@@ -10,6 +10,9 @@ export interface ShortcutRegistrationInput {
    */
   wakeEnabled?: boolean
   wakeRegistered?: boolean
+  /** 「快速添加任务」快捷键，同样默认开着，空字符串才是关闭。 */
+  addEnabled?: boolean
+  addRegistered?: boolean
 }
 
 export interface ShortcutStatus {
@@ -17,6 +20,8 @@ export interface ShortcutStatus {
   viewer: boolean
   /** 唤醒快捷键注册成功（关闭时为 false）。 */
   wake: boolean
+  /** 「快速添加任务」快捷键注册成功（关闭时为 false）。 */
+  add: boolean
   /** True only when an enabled shortcut failed to register on Wayland. */
   waylandLimited: boolean
 }
@@ -31,11 +36,14 @@ export function buildShortcutStatus(input: ShortcutRegistrationInput): ShortcutS
   const viewer = input.viewerEnabled ? input.viewerRegistered : false
   const wakeEnabled = input.wakeEnabled === true
   const wake = wakeEnabled ? input.wakeRegistered === true : false
+  const addEnabled = input.addEnabled === true
+  const add = addEnabled ? input.addRegistered === true : false
 
   const entryFailed = input.entryEnabled && !input.entryRegistered
   const viewerFailed = input.viewerEnabled && !input.viewerRegistered
   const wakeFailed = wakeEnabled && !wake
-  const waylandLimited = input.isWaylandSession && (entryFailed || viewerFailed || wakeFailed)
+  const addFailed = addEnabled && !add
+  const waylandLimited = input.isWaylandSession && (entryFailed || viewerFailed || wakeFailed || addFailed)
 
-  return { entry, viewer, wake, waylandLimited }
+  return { entry, viewer, wake, add, waylandLimited }
 }

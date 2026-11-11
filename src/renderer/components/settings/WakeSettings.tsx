@@ -10,7 +10,7 @@ const isMac = window.api.platform === 'darwin'
 interface WakeSettingsProps {
   config: AppConfig
   onChange: (partial: Partial<AppConfig>) => void
-  hotkeyWarnings?: { entry: boolean; viewer: boolean; wake: boolean; waylandLimited: boolean }
+  hotkeyWarnings?: { entry: boolean; viewer: boolean; wake: boolean; add: boolean; waylandLimited: boolean }
 }
 
 /**

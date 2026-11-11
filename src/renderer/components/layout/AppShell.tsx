@@ -33,6 +33,7 @@ import { registerConfirm } from '@/lib/confirm-bridge'
 import { resolveSelectedTasks } from '@/lib/task-selection'
 import { useSyncedPrefsEvents } from '@/hooks/use-synced-prefs'
 import { useReorderStore } from '@/stores/reorder-store'
+import { useNewTaskRequestStore } from '@/stores/new-task-request-store'
 import { api } from '@/lib/api'
 import { applyTheme } from '@/lib/theme'
 import type { ThemeOption } from '@/lib/theme'
@@ -638,6 +639,18 @@ export function AppShell() {
   useEffect(() => {
     return api.onNavigate((path) => {
       navigate({ to: path })
+    })
+  }, [navigate])
+
+  // 全局「快速添加任务」：主窗口已在前台时，主进程只发这个事件（小窗不弹）。
+  // 列表会自己接手——TaskList 看到 store 里的请求就打开输入框；如果当前页面根本
+  // 没有列表（设置、集成等），就把这次请求带到收件箱，让那儿的列表打开输入框。
+  useEffect(() => {
+    return api.onQuickAddMain(() => {
+      useNewTaskRequestStore.getState().request()
+      setTimeout(() => {
+        if (useNewTaskRequestStore.getState().requestedAt !== null) void navigate({ to: '/inbox' })
+      }, 80)
     })
   }, [navigate])
 

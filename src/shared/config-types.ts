@@ -304,6 +304,11 @@ export interface AppConfig {
    * 主窗口会被还原并置于前台；'' 表示关闭该快捷键。全局注册，在其他应用里也生效。
    */
   wake_hotkey?: string
+  /**
+   * 「快速添加任务」全局快捷键（Electron accelerator）。按下后只弹出快速录入小窗，
+   * 主窗口在前台时改为跳到主窗口内的新建任务；'' 表示关闭该快捷键。
+   */
+  quick_add_hotkey?: string
   quick_entry_default_project_id?: number
   exclamation_today?: boolean
   project_cycle_modifier?: 'ctrl' | 'alt' | 'ctrl+alt'
