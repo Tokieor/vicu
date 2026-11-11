@@ -467,6 +467,28 @@ describe('start_hidden (D-LNX-1)', () => {
   })
 })
 
+describe('close_to_tray', () => {
+  // 默认关闭：点关闭按钮即退出，和加入这个开关之前一样。
+  it('is off unless the config says true', () => {
+    expect(normalizeConfig({}).close_to_tray).toBe(false)
+    expect(normalizeConfig({ close_to_tray: 'yes' }).close_to_tray).toBe(false)
+    expect(normalizeConfig({ close_to_tray: true }).close_to_tray).toBe(true)
+  })
+
+  it('is changed by a patch and keeps the other window preferences', () => {
+    const before = userConfig({ launch_on_startup: true, start_hidden: true })
+    const after = applyConfigPatch(before, { close_to_tray: true })
+    expect(after.close_to_tray).toBe(true)
+    expect(after.launch_on_startup).toBe(true)
+    expect(after.start_hidden).toBe(true)
+  })
+
+  it('turns back off with an explicit false, not by dropping the key', () => {
+    const before = userConfig({ close_to_tray: true })
+    expect(applyConfigPatch(before, { close_to_tray: false }).close_to_tray).toBe(false)
+  })
+})
+
 describe('show_project_task_count', () => {
   it('is off unless the config says true', () => {
     expect(normalizeConfig({}).show_project_task_count).toBe(false)

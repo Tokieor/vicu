@@ -1,14 +1,24 @@
 import { app, Tray, Menu, nativeImage } from 'electron'
 import { join } from 'path'
+import { subscribeLocale, t } from '../shared/i18n'
 import { isMac } from './platform'
 
 let tray: Tray | null = null
+let unsubscribeLocale: (() => void) | null = null
 
 export interface TrayCallbacks {
   onShowMainWindow: () => void
+  /** Hides the main window, leaving the app in the tray (the close button does the same when
+   *  "Close to tray" is on). */
+  onHideMainWindow?: () => void
   onShowQuickEntry: () => void
   onShowQuickView: () => void
   onQuit: () => void
+  /** Quick Entry / View rows are only listed while the feature is on. */
+  isQuickEntryEnabled?: () => boolean
+  isQuickViewEnabled?: () => boolean
+  /** Whether the main window is on screen, so the menu can offer Show or Hide. */
+  isMainWindowVisible?: () => boolean
 }
 
 let callbacks: TrayCallbacks | null = null
@@ -84,28 +94,42 @@ export function createTray(cbs: TrayCallbacks): void {
     // The click event does NOT fire when setContextMenu() has been called (macOS convention).
     tray.setIgnoreDoubleClickEvents(true)
   } else {
-    // Windows: left-click toggles main window, right-click shows context menu
+    // Windows: left-click (or double-click) brings the main window back, right-click shows the menu
     tray.on('click', () => {
       callbacks?.onShowMainWindow()
     })
+    tray.on('double-click', () => {
+      callbacks?.onShowMainWindow()
+    })
   }
+
+  // The menu is rebuilt when the language changes, so the tray follows the app.
+  unsubscribeLocale = subscribeLocale(() => updateTrayMenu())
 }
 
 export function updateTrayMenu(): void {
   if (!tray || !callbacks) return
 
-  const contextMenu = Menu.buildFromTemplate([
-    { label: 'Show Vicu', click: () => callbacks!.onShowMainWindow() },
-    { label: 'Quick Entry', click: () => callbacks!.onShowQuickEntry() },
-    { label: 'Quick View', click: () => callbacks!.onShowQuickView() },
-    { type: 'separator' },
-    { label: 'Quit', click: () => callbacks!.onQuit() },
-  ])
+  const template: Electron.MenuItemConstructorOptions[] = [
+    { label: t('Show Vicu'), click: () => callbacks!.onShowMainWindow() },
+  ]
+  if (!isMac && callbacks.onHideMainWindow) {
+    template.push({ label: t('Hide Vicu'), click: () => callbacks!.onHideMainWindow?.() })
+  }
+  if (callbacks.isQuickEntryEnabled?.() ?? true) {
+    template.push({ label: t('Quick Entry'), click: () => callbacks!.onShowQuickEntry() })
+  }
+  if (callbacks.isQuickViewEnabled?.() ?? true) {
+    template.push({ label: t('Quick View'), click: () => callbacks!.onShowQuickView() })
+  }
+  template.push({ type: 'separator' }, { label: t('Quit Vicu'), click: () => callbacks!.onQuit() })
 
-  tray.setContextMenu(contextMenu)
+  tray.setContextMenu(Menu.buildFromTemplate(template))
 }
 
 export function destroyTray(): void {
+  unsubscribeLocale?.()
+  unsubscribeLocale = null
   if (tray) {
     tray.destroy()
     tray = null
@@ -115,4 +139,13 @@ export function destroyTray(): void {
 
 export function hasTray(): boolean {
   return tray !== null
+}
+
+/** Hides the main window with a balloon on Windows the first time, so the app is not "lost". */
+export function showTrayHint(): void {
+  if (!tray) return
+  tray.displayBalloon?.({
+    title: 'Vicu',
+    content: t('Vicu is still running. Click the tray icon to reopen it.'),
+  })
 }

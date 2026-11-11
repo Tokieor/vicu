@@ -4,7 +4,7 @@ import { registerIpcHandlers } from './ipc-handlers'
 import { loadConfig, saveConfigQuietly, type AppConfig, DEFAULT_QUICK_ENTRY_HOTKEY, DEFAULT_QUICK_VIEW_HOTKEY } from './config'
 import { isQuickEntryEnabled, isQuickViewEnabled } from '../shared/config-types'
 import { authManager } from './auth/auth-manager'
-import { createTray, destroyTray, hasTray } from './tray'
+import { createTray, destroyTray, hasTray, showTrayHint } from './tray'
 import { returnFocusToPreviousWindow, destroyDummyWindow } from './focus'
 import { registerQuickEntryState } from './quick-entry-state'
 import { initNotifications, refreshTaskRemindersOnFocus, rescheduleNotifications, stopNotifications, setNotificationsMainWindow } from './notifications'
@@ -46,6 +46,8 @@ let updateChecks: UpdateChecksHandle | null = null
 let lastCustomListFocusSync = 0
 /** Tracks intentional app quit (tray Quit / before-quit). */
 let appIsQuitting = false
+/** The "still running in the tray" balloon is shown once per run, not on every close. */
+let trayHintShown = false
 
 // Register shared state so ipc-handlers can access these without a circular import.
 // The actual function bodies are defined below; the closures capture the module-level
@@ -59,6 +61,7 @@ registerQuickEntryState({
   setViewerHeight: (h) => setViewerHeight(h),
   setQuickEntryHeight: (h) => setQuickEntryHeight(h),
   applyQuickEntrySettings: () => applyQuickEntrySettings(),
+  syncTrayWithConfig: () => syncTrayWithConfig(),
   getLastShortcutStatus: () => lastShortcutStatus,
 })
 
@@ -425,14 +428,21 @@ function createAndWireMainWindow(config: AppConfig | null, options: { startHidde
     void syncSyncedPrefs()
   })
 
-  // Unified close policy, evaluated at close time (not startup time):
-  // hide instead of closing whenever that leaves the user a way back —
-  // always on macOS (dock), elsewhere when the tray is active.
+  // Unified close policy, evaluated at close time (not startup time), so a change in Settings
+  // takes effect on the next click of the close button:
+  //   - macOS always hides (the dock is the way back);
+  //   - elsewhere, only when "Close to tray" is on and the tray icon really exists — hiding with
+  //     no icon would leave the app running with no way back;
+  //   - otherwise the window closes and the app quits (the default).
   win.on('close', (e) => {
     if (appIsQuitting) return
-    if (isMac || hasTray()) {
+    if (isMac || (closesToTray(loadConfig()) && hasTray())) {
       e.preventDefault()
       win.hide()
+      if (!isMac && !trayHintShown) {
+        trayHintShown = true
+        showTrayHint()
+      }
     }
   })
 
@@ -441,6 +451,15 @@ function createAndWireMainWindow(config: AppConfig | null, options: { startHidde
 }
 
 // --- Tray setup ---
+/** The "Close to tray" preference; off when missing (the default: closing quits). */
+function closesToTray(config: AppConfig | null): boolean {
+  return config?.close_to_tray === true
+}
+
+function wantsTray(config: AppConfig | null): boolean {
+  return closesToTray(config) || isQuickEntryEnabled(config) || isQuickViewEnabled(config)
+}
+
 function setupTray(): void {
   if (hasTray()) return
   createTray({
@@ -452,13 +471,27 @@ function setupTray(): void {
       if (mainWindow.isMinimized()) mainWindow.restore()
       mainWindow.focus()
     },
+    onHideMainWindow: () => {
+      if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide()
+    },
     onShowQuickEntry: () => showQuickEntry(),
     onShowQuickView: () => showQuickView(),
     onQuit: () => {
       appIsQuitting = true
       app.quit()
     },
+    isQuickEntryEnabled: () => isQuickEntryEnabled(loadConfig()),
+    isQuickViewEnabled: () => isQuickViewEnabled(loadConfig()),
   })
+}
+
+/**
+ * Creates or removes the tray icon after the preference changed: it is needed while "Close to
+ * tray" is on, and stays while Quick Entry / View need it as their way back into the app.
+ */
+function syncTrayWithConfig(): void {
+  if (wantsTray(loadConfig())) setupTray()
+  else destroyTray()
 }
 
 // --- Quick Entry/View initialization ---
@@ -577,7 +610,7 @@ function applyQuickEntrySettings(): { entry: boolean; viewer: boolean; waylandLi
     applyStartupSettings(config)
     return result
   } else {
-    // Clean up all windows and tray
+    // Clean up all windows; the tray stays if "Close to tray" still needs it.
     if (quickEntryWindow && !quickEntryWindow.isDestroyed()) {
       quickEntryWindow.destroy()
       quickEntryWindow = null
@@ -586,7 +619,7 @@ function applyQuickEntrySettings(): { entry: boolean; viewer: boolean; waylandLi
       quickViewWindow.destroy()
       quickViewWindow = null
     }
-    destroyTray()
+    syncTrayWithConfig()
     if (dragHoverTimer) {
       clearInterval(dragHoverTimer)
       dragHoverTimer = null
@@ -732,9 +765,9 @@ if (!gotLock) {
 
     const config = loadConfig()
     // Start in the tray when launched at login with "Start hidden" (or with --hidden), but only
-    // when there is a way back: the tray icon exists when Quick Entry or Quick View is on, and
-    // macOS always has the dock.
-    const trayWillExist = !!config && (isQuickEntryEnabled(config) || isQuickViewEnabled(config))
+    // when there is a way back: the tray icon exists when Quick Entry, Quick View or "Close to
+    // tray" is on, and macOS always has the dock.
+    const trayWillExist = !!config && wantsTray(config)
     const startHidden = !!config && shouldStartHidden({
       hiddenArg: parseHiddenArg(process.argv),
       openedAtLogin: isMac && app.getLoginItemSettings().wasOpenedAtLogin,
@@ -811,11 +844,12 @@ if (!gotLock) {
       },
     })
 
-    // Quick Entry/View: if either enabled, set up tray + windows + hotkeys.
+    // The tray icon is created when something needs it: "Close to tray", or Quick Entry / View
+    // (which have no window of their own to go back to).
     // Require config to be non-null: on first launch loadConfig() returns null, and
     // initQuickEntryWindows(null) would throw before the user finished setup.
+    if (config && wantsTray(config)) setupTray()
     if (config && (isQuickEntryEnabled(config) || isQuickViewEnabled(config))) {
-      setupTray()
       initQuickEntryWindows(config)
       globalShortcut.unregisterAll() // Clear stale registrations from crashes
       registerQuickEntryShortcuts(config)
@@ -842,10 +876,10 @@ if (!gotLock) {
     // may close before the main window is created, which would quit the app.
     if (!startupComplete) return
     // macOS: never quit on window-all-closed (standard macOS behavior)
-    // Windows: only quit if tray is not active
-    if (!isMac && !hasTray()) {
-      app.quit()
-    }
+    // Windows/Linux: stay alive only while the window can be brought back from a tray icon.
+    if (isMac) return
+    if (closesToTray(loadConfig()) && hasTray()) return
+    app.quit()
   })
 
   app.on('activate', () => {

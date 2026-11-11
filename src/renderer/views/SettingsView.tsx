@@ -537,13 +537,35 @@ export function SettingsView() {
                       checked={fullConfig?.start_hidden ?? false}
                       onChange={(e) => handleQuickEntryChange({ start_hidden: e.target.checked })}
                     />
-                    <span className="text-sm text-[var(--text-primary)]">
+                    <span className="shrink-0 whitespace-nowrap text-sm text-[var(--text-primary)]">
                       Start hidden
                     </span>
-                    <span className="text-xs text-[var(--text-secondary)]">(no window at login; needs the tray icon from Quick Entry / View)</span>
+                    <span className="text-xs text-[var(--text-secondary)]">(no window at login; needs a tray icon: Close to tray, or Quick Entry / View)</span>
                   </label>
                 )}
               </>
+            )}
+
+            {window.api.platform !== 'darwin' && (
+              <div>
+                <label className="flex cursor-pointer items-center gap-2">
+                  <Checkbox
+                    checked={fullConfig?.close_to_tray === true}
+                    onChange={(e) => handleQuickEntryChange({ close_to_tray: e.target.checked })}
+                  />
+                  <span className="text-sm text-[var(--text-primary)]">
+                    Close to tray
+                  </span>
+                  <span className="text-xs text-[var(--text-secondary)]">(keep running in the tray)</span>
+                </label>
+                <p className="ml-6 mt-1 text-xs text-[var(--text-secondary)]">
+                  On: the close button only hides the window, and Vicu keeps running in the system tray —
+                  click the tray icon to reopen it, or choose Quit there to exit for good.
+                </p>
+                <p className="ml-6 mt-1 text-xs text-[var(--text-secondary)]">
+                  Off (default): closing the window quits Vicu.
+                </p>
+              </div>
             )}
 
             <label className="flex cursor-pointer items-center gap-2">

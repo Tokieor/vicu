@@ -120,6 +120,7 @@ import {
   getQuickEntryWindow,
   getQuickViewWindow,
   applyQuickEntrySettings,
+  syncTrayWithConfig,
   getLastShortcutStatus,
 } from './quick-entry-state'
 import { getAPIToken, getOidcSignInMode, getProviderKey, getSecretStorageStatus, storeAPIToken, API_TOKEN_NO_EXPIRY } from './auth/token-store'
@@ -510,6 +511,9 @@ export function registerIpcHandlers(): void {
     const keys = Object.keys(patch)
     const next = applyConfigPatch(latest, patch as Record<string, unknown>)
     persistConfig(next, !keys.every((k) => QUIET_PATCH_KEYS.has(k)))
+    // "Close to tray" needs the tray icon while it is on, and drops it when it goes off (unless
+    // Quick Entry / View still keep the app reachable through it).
+    if ('close_to_tray' in patch) syncTrayWithConfig()
     // The Inbox is a synced setting (cross-app semantics 11.4): a choice made here reaches every
     // device. config.inbox_project_id stays the local cache every reader uses.
     if ('inbox_project_id' in patch && next.inbox_project_id > 0 && next.inbox_project_id !== latest.inbox_project_id && !next.standalone_mode && next.vikunja_url) {

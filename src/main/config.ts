@@ -185,6 +185,8 @@ export function normalizeConfig(raw: Record<string, unknown>): AppConfig {
     },
     launch_on_startup: raw.launch_on_startup === true,
     start_hidden: raw.start_hidden === true,
+    // 关闭窗口时隐藏到托盘；缺省为关（关闭即退出）。
+    close_to_tray: raw.close_to_tray === true,
     standalone_mode: raw.standalone_mode === true,
     show_today_overdue_badge: raw.show_today_overdue_badge === true,
     show_project_progress: raw.show_project_progress !== false,

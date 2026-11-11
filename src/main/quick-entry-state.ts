@@ -19,6 +19,7 @@ let _hideQuickView: VoidFn = () => {}
 let _setViewerHeight: HeightFn = () => {}
 let _setQuickEntryHeight: HeightFn = () => {}
 let _applyQuickEntrySettings: ApplySettingsFn = () => ({ entry: false, viewer: false, waylandLimited: false })
+let _syncTrayWithConfig: VoidFn = () => {}
 let _getLastShortcutStatus: StatusFn = () => ({ entry: false, viewer: false, waylandLimited: false })
 
 export function registerQuickEntryState(fns: {
@@ -30,6 +31,8 @@ export function registerQuickEntryState(fns: {
   setViewerHeight: HeightFn
   setQuickEntryHeight: HeightFn
   applyQuickEntrySettings: ApplySettingsFn
+  /** Creates or removes the tray icon after "Close to tray" changed. */
+  syncTrayWithConfig: VoidFn
   getLastShortcutStatus: StatusFn
 }): void {
   _getMainWindow = fns.getMainWindow
@@ -40,6 +43,7 @@ export function registerQuickEntryState(fns: {
   _setViewerHeight = fns.setViewerHeight
   _setQuickEntryHeight = fns.setQuickEntryHeight
   _applyQuickEntrySettings = fns.applyQuickEntrySettings
+  _syncTrayWithConfig = fns.syncTrayWithConfig
   _getLastShortcutStatus = fns.getLastShortcutStatus
 }
 
@@ -51,4 +55,5 @@ export function hideQuickView(): void { _hideQuickView() }
 export function setViewerHeight(h: number): void { _setViewerHeight(h) }
 export function setQuickEntryHeight(h: number): void { _setQuickEntryHeight(h) }
 export function applyQuickEntrySettings(): HotkeyRegistrationResult { return _applyQuickEntrySettings() }
+export function syncTrayWithConfig(): void { _syncTrayWithConfig() }
 export function getLastShortcutStatus(): HotkeyRegistrationResult { return _getLastShortcutStatus() }

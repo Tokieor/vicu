@@ -309,6 +309,11 @@ export interface AppConfig {
   launch_on_startup?: boolean
   /** Start in the tray, without showing the main window, when launched at login. */
   start_hidden?: boolean
+  /**
+   * Closing the main window hides it to the tray instead of quitting (Windows and Linux; macOS
+   * always hides). Missing or false is the default: closing quits. Persisted in config.json.
+   */
+  close_to_tray?: boolean
   standalone_mode?: boolean
   show_today_overdue_badge?: boolean
   /** Progress rings next to the projects in the sidebar. Missing means on. */
