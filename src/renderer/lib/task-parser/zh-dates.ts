@@ -410,7 +410,16 @@ export function parseZhDate(text: string, reference: Date = new Date()): ZhDateM
   const dateHit = matchDatePhrase(text, today)
   if (dateHit?.past) return null
 
-  const clockHit = matchClockPhrase(text, dateHit ? dateHit.end : 0, dateHit?.period ?? null)
+  // 日期后面可能跟着星期词（"10月12日周一" 就是 When 面板自己的写法），
+  // 时间在那之后再找，否则整段读不出时刻，只剩日期。
+  let clockFrom = dateHit ? dateHit.end : 0
+  if (dateHit) {
+    const tail = text.slice(clockFrom)
+    const weekday = /^[\s,、]*周[一二三四五六日天]/.exec(tail)
+    if (weekday) clockFrom += weekday[0].length
+  }
+
+  const clockHit = matchClockPhrase(text, clockFrom, dateHit?.period ?? null)
   if (!dateHit && !clockHit) return null
   // 只有时段（"下午"）：说得清一天里的哪一段，但说不出日期，交给调用方当没写。
   if (!dateHit && clockHit?.hour === null) return null

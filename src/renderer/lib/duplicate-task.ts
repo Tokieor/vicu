@@ -8,6 +8,7 @@
 import { isNullDate } from './date-utils'
 import { isTempTaskId } from './pending-cache'
 import type { CreateTaskPayload, Label, PersonRef, Task } from './vikunja-types'
+import { t } from '@/lib/i18n'
 
 export interface DuplicateDeps {
   createTask(projectId: number, payload: CreateTaskPayload, labels: Label[]): Promise<Task>
@@ -22,6 +23,8 @@ export interface DuplicateDeps {
 export interface DuplicateResult {
   copy: Task
   problems: string[]
+  /** Every task made: the copy first, then its copied subtasks. Undo deletes them in reverse. */
+  made: Task[]
 }
 
 /** What a copy takes from `task` (section 15): always open, no comments, attachments or position. */
@@ -40,12 +43,14 @@ export function duplicatePayload(task: Task): CreateTaskPayload {
 
 export async function duplicateTask(task: Task, deps: DuplicateDeps): Promise<DuplicateResult> {
   const problems: string[] = []
+  const made: Task[] = []
   const shared = deps.isShared(task.project_id)
   const visited = new Set<number>([task.id])
 
   const copyOf = async (original: Task): Promise<Task> => {
     const labels = original.labels ?? []
     const copy = await deps.createTask(original.project_id, duplicatePayload(original), labels)
+    made.push(copy)
     // A queued create carries its labels; a created one gets them now.
     if (!isTempTaskId(copy.id)) {
       for (const label of labels) {
@@ -87,7 +92,20 @@ export async function duplicateTask(task: Task, deps: DuplicateDeps): Promise<Du
     return copy
   }
 
-  return { copy: await copyOf(task), problems }
+  const copy = await copyOf(task)
+  return { copy, problems, made }
+}
+
+/**
+ * What the toast after Duplicate says (vicu-android issue 97): the copy by name when there is one,
+ * otherwise how many, or the first problem.
+ */
+export function duplicateMessage(results: readonly DuplicateResult[], problems: readonly string[]): string {
+  // 这些是运行时拼出来的提示语，编译期插桩够不到，只能在这里手写 t()
+  if (problems.length > 0) {
+    return problems.length === 1 ? problems[0] : `${problems[0]} ${t('(and {0} more)', problems.length - 1)}`
+  }
+  return results.length === 1 ? t('Duplicated “{0}”', results[0].copy.title) : t('{0} tasks duplicated', results.length)
 }
 
 /**

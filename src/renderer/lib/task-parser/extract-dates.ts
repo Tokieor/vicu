@@ -107,7 +107,10 @@ export function extractDate(
 
   // 中文输入先走中文解析：chrono 只有英文解析器，读不出「明天下午3点」。
   // 命中就整条用它（中文没有词边界，混着英文规则反而会切错）。
-  const zh = parseZhDate(working, reference)
+  // 只在文本里真的有汉字时才走这条路：中文解析器对纯英文输入并不比 chrono 更准，
+  // 让它去读 "tomorrow 9am" 反而会把数字当成「9 号」，把一整天算错。
+  const hasHan = /[\u3400-\u9fff]/.test(working)
+  const zh = hasHan ? parseZhDate(working, reference) : null
   if (zh && !(options.skipTimeOnly && !zh.hasDate)) {
     const overlaps = [...consumed, ...(options.hidden ?? [])].some((c) => zh.start < c.end && zh.end > c.start)
     if (!overlaps) {

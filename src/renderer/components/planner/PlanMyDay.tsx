@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { t } from '@/lib/i18n'
 import { Sparkles, Sun, Undo2 } from 'lucide-react'
 import { Button } from '@/components/shared/Button'
 import { Checkbox } from '@/components/shared/Checkbox'
@@ -471,7 +472,7 @@ export function PlanMyDaySession({ onExit, listRef }: { onExit: () => void; list
           </div>
           <div className="flex items-center justify-between gap-2">
             <p className="text-caption text-text-secondary" data-plan-step>
-              Step {step + 1} of 4 · {PLAN_STEPS[step]}
+              {t('Step {0} of 4 · {1}', step + 1, t(PLAN_STEPS[step]))}
             </p>
             {session.assistantReady && (
               <label className="flex cursor-pointer items-center gap-1 text-caption text-text-secondary">

@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
+import { t } from '@/lib/i18n'
 import { useAppConfig } from './use-app-config'
 import { useAiReady } from './use-ai'
 import { useFilters } from './use-filters'
@@ -35,6 +36,7 @@ export const PLAN_STEPS = ['Leftovers', 'Choose', 'Arrange', 'Ready'] as const
 
 const LENGTH_CYCLE = [15, 30, 45, 60, 90, 120]
 
+// 标签在用到时才翻译：模块级常量在加载时求值，切换语言后不会变。
 const HANDLED_LABEL: Record<LeftoverAction, string> = {
   today: 'Moved to today',
   tomorrow: 'Moved to tomorrow',
@@ -201,7 +203,7 @@ export function usePlanSession() {
     } else {
       write(task, leftoverChanges(task, action, new Date()))
     }
-    setHandled((prev) => new Map(prev).set(task.id, { task, label: HANDLED_LABEL[action] }))
+    setHandled((prev) => new Map(prev).set(task.id, { task, label: t(HANDLED_LABEL[action]) }))
   }
 
   const toggleTick = (id: number) => {

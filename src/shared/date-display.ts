@@ -1,5 +1,5 @@
 import { diffLocalDays, toLocalDate } from './due-dates'
-import { getLocale, t } from './i18n'
+import { t } from './i18n'
 
 // How a due date or a completion time is phrased (docs/cross-app-semantics-v1.md section 8,
 // pinned by the `dateDisplay` vectors of test-fixtures/cross-app-semantics-v1.json).
@@ -65,9 +65,14 @@ const WORDS = {
   daysAgo: (n: number) => t('{0} days ago', n),
 }
 
-/** 英文模式沿用契约里的 ", "；中文模式用全角逗号，避免「昨天, 19:30」这种夹生写法。 */
+/**
+ * 逗号一律用「半角 + 空格」：这个字符串会原样回到 When 面板的输入框里再被解析回来，
+ * 全角逗号后面没有空格，chrono 读 "Oct 7，1:00 PM" 时会把时刻留在外面，
+ * 用户改完时间按回车就把时间丢了（上游 issue 98 的中文形态）。
+ * 中文排版里「今天, 10月7日, 13:00」也读得通，宁可这里朴素一点。
+ */
 function joinPhrase(day: string, rest: string): string {
-  return `${day}${getLocale() === 'zh' ? '，' : ', '}${rest}`
+  return `${day}, ${rest}`
 }
 
 const PATTERNS: Record<'en-US' | 'en-GB', Pattern> = {
