@@ -1,6 +1,7 @@
 // What a task row shows on its meta line depends on the view it is in (docs/design-system-v1.md,
 // section 4): a row never repeats what the view already says. Pure rules; the React side is
 // components/task-list/RowViewContext.tsx.
+import { t } from '../../shared/i18n'
 
 /** What the view around a row already says. Every field is optional; the default says nothing. */
 export interface RowView {
@@ -34,5 +35,5 @@ export function rowLabels<T extends { id: number }>(labels: readonly T[], view: 
 
 /** The checklist count of the meta line and its accessible name ("1 of 3"). */
 export function checklistLabel(completed: number, total: number): string {
-  return `${completed} of ${total}`
+  return t('{0} of {1}', completed, total)
 }

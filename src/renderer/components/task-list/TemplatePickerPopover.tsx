@@ -1,3 +1,4 @@
+import { t } from '@/lib/i18n'
 import { useRef, useState } from 'react'
 import { ChevronDown, Pencil, Trash2 } from 'lucide-react'
 import { useDateFormat } from '@/hooks/use-date-format'
@@ -19,7 +20,7 @@ function TemplateRow({ template, onUse, onClose }: { template: ListedTemplate; o
   const count = template.subtasks?.length ?? 0
   const details = [
     dueDate ? formatDateChip(new Date(dueDate), !template.due?.time, new Date(), dateFormat) : null,
-    count ? `${count} subtask${count === 1 ? '' : 's'}` : null,
+    count ? t(count === 1 ? '{0} subtask' : '{0} subtasks', count) : null,
   ].filter(Boolean).join(', ')
   return (
     <div className="group flex items-center rounded-control hover:bg-[var(--bg-hover)] focus-within:bg-[var(--bg-hover)]">

@@ -103,7 +103,7 @@ export function ReminderPickerPopover({ anchorRef, task, dueDate, reminders: con
               <button
                 type="button"
                 onClick={() => removeReminder(i)}
-                aria-label={`Remove reminder ${formatReminder(r)}`}
+                aria-label={t('Remove reminder {0}', formatReminder(r))}
                 title="Remove reminder"
                 className="ml-2 text-[var(--text-secondary)] hover:text-danger"
               >
@@ -151,7 +151,7 @@ export function ReminderPickerPopover({ anchorRef, task, dueDate, reminders: con
         <Button
           variant="primary"
           onClick={() => addPicked(staged)}
-          aria-label={`Add reminder, ${whenText({ date: staged.date, time: staged.time ?? DEFAULT_REMINDER_TIME }, now, dateFormat)}`}
+          aria-label={t('Add reminder, {0}', whenText({ date: staged.date, time: staged.time ?? DEFAULT_REMINDER_TIME }, now, dateFormat))}
           className="mt-2 w-full"
         >
           Add reminder
@@ -191,7 +191,7 @@ function PlaceReminderSection({ taskId }: { taskId: number }) {
           <button
             type="button"
             onClick={() => removeReminder(taskId)}
-            aria-label={`Remove location reminder ${locationReminderLabel(current.trigger, current.placeName)}`}
+            aria-label={t('Remove location reminder {0}', locationReminderLabel(current.trigger, current.placeName))}
             title="Remove location reminder"
             className="ml-2 text-[var(--text-secondary)] hover:text-danger"
           >
@@ -241,28 +241,27 @@ function PlaceReminderSection({ taskId }: { taskId: number }) {
   )
 }
 
-function formatRelativeReminder(
+/**
+ * 已添加的相对提醒在 chip 上的读法。纯函数，所有分支都在渲染期走 t()：
+ * 编译期插桩只能处理字典命中的字面量，模板字符串与 unit/direction 变量够不到。
+ */
+export function formatRelativeReminder(
   period: number,
   relativeTo: 'due_date' | 'start_date' | 'end_date'
 ): string {
-  const target =
-    relativeTo === 'start_date'
-      ? 'start date'
-      : relativeTo === 'end_date'
-        ? 'end date'
+  const targetKey =
+    relativeTo === 'start_date' ? 'start date'
+      : relativeTo === 'end_date' ? 'end date'
         : 'due date'
 
-  if (period === 0) return `At ${target}`
+  if (period === 0) return t(`At ${targetKey}`)
 
   const absSec = Math.abs(period)
   const direction = period < 0 ? 'before' : 'after'
+  const target = t(targetKey)
 
-  if (absSec < 60) return `${absSec}s ${direction} ${target}`
-  if (absSec < 3600) return `${Math.round(absSec / 60)} min ${direction} ${target}`
-  if (absSec < 86400) {
-    const hours = Math.round(absSec / 3600)
-    return `${hours}h ${direction} ${target}`
-  }
-  const days = Math.round(absSec / 86400)
-  return `${days}d ${direction} ${target}`
+  if (absSec < 60) return t(`{0}s ${direction} {1}`, absSec, target)
+  if (absSec < 3600) return t(`{0} min ${direction} {1}`, Math.round(absSec / 60), target)
+  if (absSec < 86400) return t(`{0}h ${direction} {1}`, Math.round(absSec / 3600), target)
+  return t(`{0}d ${direction} {1}`, Math.round(absSec / 86400), target)
 }

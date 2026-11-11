@@ -191,7 +191,7 @@ export function TaskCardBar({
   // A location reminder alone reads as its place ("Arrive: Home"), as on the phone.
   const reminderText = placeReminder && reminderCount === 1
     ? locationReminderLabel(placeReminder.trigger, placeReminder.placeName)
-    : reminderCount === 1 ? '1 reminder' : `${reminderCount} reminders`
+    : reminderCount === 1 ? t('1 reminder') : t('{0} reminders', reminderCount)
   const is = (p: OpenPopover) => active === p
   const shared = !!collab?.access.shared
   const me = collab?.me ?? null
@@ -238,7 +238,7 @@ export function TaskCardBar({
       </PropertyButton>
       {is('priority') && <PriorityPickerPopover anchorRef={priorityRef} currentPriority={task.priority} onPriorityChange={onPriorityChange} onClose={onClose} />}
 
-      <PropertyButton prop="labels" name="Labels" unsetName="Add label" value={labels.map((l) => l.title).join(' ')} isSet={labels.length > 0} open={is('label')} haspopup="dialog" buttonRef={labelRef} onClick={() => onToggle('label')} unsetLabel="Label" className="gap-1.5 px-1.5">
+      <PropertyButton prop="labels" name="Labels" unsetName="Add label" value={labels.map((l) => l.title).join(' ')} isSet={labels.length > 0} open={is('label')} haspopup="dialog" buttonRef={labelRef} onClick={() => onToggle('label')} unsetLabel={t('Label')} className="gap-1.5 px-1.5">
         {labels.map((l) => (
           <Fragment key={l.id}>
             <span className="vicu-chip rounded-chip px-2 py-px text-chip leading-tight" style={labelChipSolidStyle(l.hex_color, isDark)}>

@@ -613,7 +613,7 @@ export function NewTaskComposer({
         </div>
         <div className="relative">
           <ActionButton buttonRef={reminderButtonRef} popup="dialog" expanded={openPicker === 'reminder'} active={reminders.length > 0} label="Reminder" onClick={() => setOpenPicker(openPicker === 'reminder' ? null : 'reminder')}>
-            <Bell className="h-3.5 w-3.5" /> {reminders.length ? `${reminders.length} reminder${reminders.length === 1 ? '' : 's'}` : 'Reminder'}
+            <Bell className="h-3.5 w-3.5" /> {reminders.length === 1 ? t('1 reminder') : reminders.length > 1 ? t('{0} reminders', reminders.length) : t('Reminder')}
           </ActionButton>
           {openPicker === 'reminder' && <ReminderPickerPopover anchorRef={reminderButtonRef} dueDate={effectiveDueDate} reminders={reminders} onReminderChange={setReminders} onClose={() => setOpenPicker(null)} />}
         </div>
@@ -625,7 +625,7 @@ export function NewTaskComposer({
         </div>
         <div className="relative">
           <ActionButton buttonRef={labelsButtonRef} popup="dialog" expanded={openPicker === 'labels'} active={labelCount > 0} label="Labels" onClick={() => setOpenPicker(openPicker === 'labels' ? null : 'labels')}>
-            <Tags className="h-3.5 w-3.5" /> {labelCount ? `${labelCount} label${labelCount === 1 ? '' : 's'}` : 'Labels'}
+            <Tags className="h-3.5 w-3.5" /> {labelCount === 1 ? t('{0} label', labelCount) : labelCount > 1 ? t('{0} labels', labelCount) : t('Labels')}
           </ActionButton>
           {openPicker === 'labels' && <DraftLabelPickerPopover anchorRef={labelsButtonRef} selectedIds={selectedLabelIds} onChange={setSelectedLabelIds} onClose={() => setOpenPicker(null)} />}
         </div>
@@ -640,7 +640,7 @@ export function NewTaskComposer({
         </ActionButton>
         {!template && (
           <ActionButton active={attachments.length > 0} label="Attachments" onClick={() => fileInputRef.current?.click()}>
-            <Paperclip className="h-3.5 w-3.5" /> {attachments.length ? `${attachments.length} file${attachments.length === 1 ? '' : 's'}` : 'Attach'}
+            <Paperclip className="h-3.5 w-3.5" /> {attachments.length === 1 ? t('{0} file', attachments.length) : attachments.length > 1 ? t('{0} files', attachments.length) : t('Attach')}
           </ActionButton>
         )}
         <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(event) => { void stageFiles(event.target.files) }} />

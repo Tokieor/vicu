@@ -24,6 +24,7 @@ import {
   readCategoryPref,
   readProjectCategoryPref,
 } from './project-categories'
+import { t } from './i18n'
 
 export const SYNCED_PREFS_VERSION = 1
 
@@ -293,7 +294,7 @@ export function readSyncedPlaces(values: Readonly<Record<string, unknown>>): Syn
 
 /** "Arrive: Home" or "Leave: Work". */
 export function locationReminderLabel(trigger: LocationTrigger, placeName: string): string {
-  return trigger === 'arrive' ? `Arrive: ${placeName}` : `Leave: ${placeName}`
+  return trigger === 'arrive' ? t('Arrive: {0}', placeName) : t('Leave: {0}', placeName)
 }
 
 // Shared routines, per person (section 6.9): this account's reminders of a routine someone shared,
