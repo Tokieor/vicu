@@ -11,6 +11,7 @@ import { useToggleAssignee } from './use-assignee-mutations'
 import { useOpenTask } from './use-open-task'
 import { useProjectAccessMap } from './use-project-access'
 import { useAddLabel, useCreateTask, useDeleteTask } from './use-task-mutations'
+import { t } from '@/lib/i18n'
 
 /** The task as the server has it now (labels, reminders, assignees, subtasks), or the cached copy offline. */
 async function fullTask(task: Task): Promise<Task> {
@@ -69,7 +70,7 @@ export function useDuplicateTasks(): (tasks: readonly Task[]) => Promise<Task[]>
     // Subtasks before their parents, so a copy's own subtasks go first and no original is touched.
     const made = results.flatMap((r) => r.made).reverse()
     const undo: ToastAction = {
-      label: 'Undo',
+      label: t('Undo'),
       onAction: () => {
         void (async () => {
           for (const task of made) {

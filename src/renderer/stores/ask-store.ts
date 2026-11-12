@@ -15,6 +15,7 @@ import { spokenConfirmation } from '../../shared/ai/talk'
 import { announce } from '@/stores/announcer-store'
 import { UNDO_TOAST_MS, toast, useToastStore } from '@/stores/toast-store'
 import { useVoiceStore } from '@/stores/voice-store'
+import { t } from '@/lib/i18n'
 
 // Ask (docs/ai-assistant-v1.md section 5): one conversation at a time with the user's model, which
 // looks things up through the read tools and proposes changes as cards. The provider request runs
@@ -394,7 +395,7 @@ export const useAskStore = create<AskState>((set, get) => {
           : (applied.count === 1 ? 'Changed 1 task' : `Changed ${applied.count} tasks`)
         useToastStore.getState().push('success', message, {
           durationMs: UNDO_TOAST_MS,
-          action: { label: 'Undo', onAction: () => void applied.undo() },
+          action: { label: t('Undo'), onAction: () => void applied.undo() },
         })
         if (created) {
           const conversation = current()

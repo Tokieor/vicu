@@ -4,6 +4,7 @@ import { api } from '@/lib/api'
 import { useCompletedTasksStore } from '@/stores/completed-tasks-store'
 import { completionHold } from '@/stores/completion-hold-store'
 import { announce } from '@/stores/announcer-store'
+import { t } from '@/lib/i18n'
 import { sortProjectTasks } from '@/lib/task-sort'
 import {
   applyPositionUpdates,
@@ -672,7 +673,7 @@ export function useCompleteTask() {
       // the pointer or focus leaves it, or until the user leaves the view); then the hold removes it.
       addCompleted(mapTaskDoneByIds(task, doneById), currentPathname(router), autoCompleted, suppressTopLevelUndo)
       completionHold.complete(task.id)
-      announce(`Completed ${task.title}`)
+      announce(t('Completed {0}', task.title))
 
       await qc.cancelQueries({ queryKey: ['tasks'] })
       await qc.cancelQueries({ queryKey: ['view-tasks'] })

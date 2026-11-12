@@ -478,7 +478,6 @@
   "Vicu is up to date.": "Vicu 已是最新版本。",
   "Note": "备注",
   "Notes": "备注",
-  "Loading…": "正在加载…",
   "Search": "搜索",
   "Search tasks": "搜索任务",
   "Add task": "添加任务",
@@ -663,8 +662,6 @@
   "Compact": "紧凑",
   "Comfortable": "宽松",
   "File": "文件",
-  "Edit": "编辑",
-  "View": "查看",
   "Window": "窗口",
   "Help": "帮助",
   "Print": "打印",
@@ -672,7 +669,6 @@
   "Reload window": "重新加载窗口",
   "Documentation": "文档",
   "Speech": "语音",
-
   "Date": "日期",
   "Low": "低",
   "Medium": "中",
@@ -690,7 +686,6 @@
   "Views": "视图",
   "Tasks to plan from": "待安排的任务",
   "Attach files. You can also paste or drop them here.": "附加文件，也可以粘贴或拖放到这里。",
-
   "Edit Project": "编辑项目",
   "New Project": "新建项目",
   "New Subproject": "新建子项目",
@@ -699,7 +694,6 @@
   "Newest first": "最新优先",
   "Oldest first": "最早优先",
   "Default ({0})": "默认（{0}）",
-
   "Mon": "周一",
   "Tue": "周二",
   "Wed": "周三",
@@ -712,7 +706,6 @@
   "{0}, every {1} weeks": "{0}，每 {1} 周",
   "{0} day after completion": "完成后 {0} 天",
   "{0} days after completion": "完成后 {0} 天",
-
   "Vicu — Test Notification": "Vicu — 测试通知",
   "Plan tomorrow": "安排明天",
   "Set up tomorrow in Plan my day.": "到「规划我的一天」里安排明天。",
@@ -723,12 +716,10 @@
   "{0} due today": "{0} 个今天到期",
   "{0} overdue": "{0} 个已逾期",
   "{0} due tomorrow": "{0} 个明天到期",
-
   "Label": "标签",
   "Add label": "添加标签",
   "1 reminder": "1 个提醒",
   "{0} reminders": "{0} 个提醒",
-
   "At due date": "截止时提醒",
   "At start date": "开始时提醒",
   "At end date": "结束时提醒",
@@ -746,7 +737,6 @@
   "Remove reminder {0}": "移除提醒 {0}",
   "Add reminder, {0}": "添加提醒，{0}",
   "Remove location reminder {0}": "移除位置提醒 {0}",
-
   "{0} label": "{0} 个标签",
   "{0} labels": "{0} 个标签",
   "{0} file": "{0} 个文件",
@@ -758,19 +748,16 @@
   "Custom": "自定义",
   "Monthly (custom)": "每月（自定义）",
   "{0} (from completion)": "{0}（完成后）",
-
   "Chinese dates and times": "中文日期与时间",
   "Also read from Chinese: 今天 / 明天 / 后天, 周三 / 下周一, 今天下午3点, 明天12:30, 晚上8点半.": "支持中文写法：今天 / 明天 / 后天、周三 / 下周一、今天下午3点、明天12:30、晚上8点半。",
   "Chinese": "中文",
   "Read only in Chinese mode: 今天 / 明天 / 后天, 周三 / 下周一, 今天下午3点, 明天12:30, 晚上8点半. The prefixes stay the Todoist ones (#project @label p1-p4); Todoist and Vikunja modes leave Chinese words in the title.": "仅在「中文」模式下解析：今天 / 明天 / 后天、周三 / 下周一、今天下午3点、明天12:30、晚上8点半。前缀沿用 Todoist 风格（#项目 @标签 p1-p4）；选 Todoist 或 Vikunja 时中文原样留在标题里。",
-
   "Schedule date": "安排日期",
   ", new": "（新）",
   "Shared": "已共享",
   "1 open task": "1 个未完成任务",
   "{0} open tasks": "{0} 个未完成任务",
   "{0} of {1} done": "{0} / {1} 已完成",
-
   "Close to tray": "关闭时最小化到托盘",
   "(keep running in the tray)": "（在托盘中继续运行）",
   "On: the close button only hides the window, and Vicu keeps running in the system tray — click the tray icon to reopen it, or choose Quit there to exit for good.": "开启后：点击关闭按钮只是隐藏窗口，Vicu 继续在系统托盘运行 —— 点击托盘图标可重新打开，或在托盘菜单中选「退出 Vicu」彻底关闭。",
@@ -778,14 +765,12 @@
   "Hide Vicu": "隐藏 Vicu",
   "Quit Vicu": "退出 Vicu",
   "Vicu is still running. Click the tray icon to reopen it.": "Vicu 仍在后台运行，点击托盘图标可重新打开。",
-
   "Navigation": "导航",
   "Task Actions": "任务操作",
   "Scheduling": "时间安排",
   "Checking voice input…": "正在检查语音输入…",
   "macOS speech recognition": "macOS 语音识别",
   "Uses {0}. Your language is recognized by Apple's servers.": "使用 {0}。你的语言由 Apple 的服务器识别。",
-
   "Wake window": "唤醒窗口",
   "Wake window shortcut": "唤醒窗口快捷键",
   "Shortcut (works while Vicu is hidden)": "快捷键（Vicu 隐藏时同样生效）",
@@ -837,5 +822,7 @@
   "Moved to today": "已移到今天",
   "Moved to tomorrow": "已移到明天",
   "Date removed": "已去掉日期",
-  "Step {0} of 4 · {1}": "第 {0} 步 / 共 4 步 · {1}"
+  "Step {0} of 4 · {1}": "第 {0} 步 / 共 4 步 · {1}",
+  "Completed": "已完成",
+  "{0} completed": "已完成 {0}"
 }

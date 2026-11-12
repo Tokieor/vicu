@@ -20,6 +20,7 @@ import { Button } from '@/components/shared/Button'
 import { EmptyState } from '@/components/shared/EmptyState'
 import { ReadingScroll } from '@/components/layout/ReadingScroll'
 import type { Project } from '@/lib/vikunja-types'
+import { t } from '@/lib/i18n'
 
 type Tab = 'due' | 'all'
 
@@ -78,7 +79,7 @@ export function ReviewView() {
     toast.success(`Marked ${prevProject.title} reviewed`, {
       key: REVIEW_TOAST_KEY,
       durationMs: UNDO_TOAST_MS,
-      action: { label: 'Undo', onAction: () => handleUndo(prevProject) },
+      action: { label: t('Undo'), onAction: () => handleUndo(prevProject) },
     })
   }
 

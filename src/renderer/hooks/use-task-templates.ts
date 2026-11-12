@@ -29,6 +29,7 @@ import { useLabels } from './use-labels'
 import { useProjects } from './use-projects'
 import { useSyncedPrefs, writeSyncedPrefs } from './use-synced-prefs'
 import { useAddLabel, useCreateTask } from './use-task-mutations'
+import { t } from '@/lib/i18n'
 
 /** The account's templates, oldest first (section 18). */
 export function useTaskTemplates(): ListedTemplate[] {
@@ -103,7 +104,7 @@ export function useTemplateActions() {
     if (await writeSyncedPrefs(queryClient, { [templateKey(id)]: null })) {
       useToastStore.getState().push('info', `Removed “${template.title}”`, {
         durationMs: UNDO_TOAST_MS,
-        action: { label: 'Undo', onAction: () => { void write(id, template) } },
+        action: { label: t('Undo'), onAction: () => { void write(id, template) } },
       })
     }
   }, [queryClient, write])

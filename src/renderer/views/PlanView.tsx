@@ -136,7 +136,7 @@ function PlanScreen() {
     if (from === to) return
     toast.success(t('Planned for {0}. Due date moved from {1}.', midSentence(dayPhrase(to)), midSentence(dayPhrase(from))), {
       action: {
-        label: 'Undo',
+        label: t('Undo'),
         onAction: () => {
           update.mutate({
             id: task.id,
@@ -156,7 +156,7 @@ function PlanScreen() {
     selectDay(day)
     toast.success(t('Moved to {0}', midSentence(dayPhrase(day))), {
       action: {
-        label: 'Undo',
+        label: t('Undo'),
         onAction: () => {
           // The patch is the difference with the task as the move left it: back to what it was.
           update.mutate({
@@ -319,7 +319,7 @@ function PlanScreen() {
       `Planned ${fitted.length} ${fitted.length === 1 ? 'task' : 'tasks'}${left > 0 ? `, ${left} did not fit` : ''}`,
       {
         action: {
-          label: 'Undo',
+          label: t('Undo'),
           onAction: () => {
             // The patch is the difference with the task as Fit left it: back to what it was.
             for (const { task, changes } of placed) {

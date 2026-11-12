@@ -181,7 +181,7 @@ function DictationPanel() {
     useToastStore.getState().push('success', addedMessage(outcome.projects.length, outcome.added.tasks.length), {
       durationMs: UNDO_TOAST_MS,
       action: {
-        label: 'Undo',
+        label: t('Undo'),
         onAction: () => {
           void undoBrainDump(outcome.added, outcome.projects, {
             deleteTask: async (task) => { await deleteTask.mutateAsync({ task, deleteSubtasks: false }) },
@@ -214,7 +214,7 @@ function DictationPanel() {
       useToastStore.getState().push('success', count === 1 ? 'Added 1 task' : `Added ${count} tasks`, {
         durationMs: UNDO_TOAST_MS,
         action: {
-          label: 'Undo',
+          label: t('Undo'),
           onAction: () => {
             void (async () => {
               for (const task of [...result.created].reverse()) {

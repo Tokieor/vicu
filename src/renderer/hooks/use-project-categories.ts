@@ -22,6 +22,7 @@ import {
   type CategoryWrites,
 } from '../../shared/project-categories'
 import type { SyncedPrefsSnapshot } from '../../shared/synced-prefs'
+import { t } from '@/lib/i18n'
 
 const DELETE_TOAST_KEY = 'category-delete'
 
@@ -130,7 +131,7 @@ export function useProjectCategoryActions() {
       toast.success(message, {
         key: DELETE_TOAST_KEY,
         durationMs: UNDO_TOAST_MS,
-        action: { label: 'Undo', onAction: () => void write(previous) },
+        action: { label: t('Undo'), onAction: () => void write(previous) },
       })
       announce(message)
     },

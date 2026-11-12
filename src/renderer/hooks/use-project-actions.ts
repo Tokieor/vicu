@@ -16,6 +16,7 @@ import { toast, UNDO_TOAST_MS } from '@/stores/toast-store'
 import type { AppConfig, Project } from '@/lib/vikunja-types'
 import { sharedRoutineNamesIn } from '@/hooks/use-routines'
 import { SHARED_ROUTINE_ARCHIVE_NOTE, projectDeleteQuestion } from '@/lib/routine-sharing'
+import { t } from '@/lib/i18n'
 
 const MOVE_TOAST_KEY = 'project-move'
 const REVIEW_TOAST_KEY = 'project-review'
@@ -83,7 +84,7 @@ export function useProjectActions() {
               key: MOVE_TOAST_KEY,
               durationMs: UNDO_TOAST_MS,
               action: {
-                label: 'Undo',
+                label: t('Undo'),
                 onAction: () => {
                   const now = activeProjects(qc)
                   const current = now.find((p) => p.id === project.id)
@@ -159,7 +160,7 @@ export function useProjectActions() {
           toast.success(`Marked ${project.title} reviewed`, {
             key: REVIEW_TOAST_KEY,
             durationMs: UNDO_TOAST_MS,
-            action: { label: 'Undo', onAction: () => review(() => restoreReviewRequest(project)) },
+            action: { label: t('Undo'), onAction: () => review(() => restoreReviewRequest(project)) },
           }),
       })
     },

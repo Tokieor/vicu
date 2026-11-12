@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { COMPLETION_TOAST_ACTION, CompletionHold } from '../../shared/completion-hold'
+import { t } from '@/lib/i18n'
 import { useToastStore } from '@/stores/toast-store'
 import { useCompletedTasksStore } from '@/stores/completed-tasks-store'
 import type { CompletedTaskEntry } from '@/stores/completed-tasks-store'
@@ -141,10 +142,14 @@ function showToast(toast: CompletionToastState | null): void {
     toasts.remove(TOAST_KEY)
     return
   }
-  toasts.push('success', toast.text, {
+  // 共享状态机（completion-hold.ts）只产英文文案，展示层在这里翻译；
+  // "Completed" 一条，"{n} completed" 两条及以上（与 completionToastText 的规则一致）。
+  const count = toast.ids.length
+  const message = count <= 1 ? t('Completed') : t('{0} completed', count)
+  toasts.push('success', message, {
     key: TOAST_KEY,
     durationMs: null,
-    action: { label: COMPLETION_TOAST_ACTION, onAction: () => undoHandler?.() },
+    action: { label: t(COMPLETION_TOAST_ACTION), onAction: () => undoHandler?.() },
     onEngage: (engaged) => completionHold.hoverToast(engaged),
     onClose: () => completionHold.dismissToast(),
   })
