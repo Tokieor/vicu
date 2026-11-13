@@ -1,4 +1,4 @@
-// The calendar's ranges: the month grid, the week, the agenda, and where the arrows go.
+// The calendar's ranges: the month grid, the week, one day, the agenda, and where the arrows go.
 // docs/calendar-views-plan.md section 4.1.
 
 import { describe, expect, it } from 'vitest'
@@ -82,6 +82,25 @@ describe('week and agenda ranges', () => {
     expect(agendaStart('2026-01-01', '2026-11-12')).toBe('2026-10-13')
     expect(diffLocalDays('2026-11-12', agendaStart('2026-01-01', '2026-11-12'))).toBe(-AGENDA_BACK_DAYS)
     expect(agendaStart('2026-11-20', '2026-11-12')).toBe('2026-11-20')
+  })
+})
+
+describe('the day view', () => {
+  it('shows exactly one day, including a weekend or a month boundary', () => {
+    expect(calendarRange('day', '2026-11-12', OPTIONS).days).toEqual(['2026-11-12'])
+    expect(calendarRange('day', '2026-11-30', OPTIONS)).toEqual({ start: '2026-11-30', end: '2026-11-30', days: ['2026-11-30'] })
+  })
+
+  it('the arrows move one day, across a month and a year', () => {
+    expect(shiftAnchor('day', '2026-11-12', 1, OPTIONS)).toBe('2026-11-13')
+    expect(shiftAnchor('day', '2026-11-12', -1, OPTIONS)).toBe('2026-11-11')
+    expect(shiftAnchor('day', '2026-11-30', 1, OPTIONS)).toBe('2026-12-01')
+    expect(shiftAnchor('day', '2027-01-01', -1, OPTIONS)).toBe('2026-12-31')
+  })
+
+  it('names the weekday in the title', () => {
+    expect(calendarTitle('day', '2026-11-12', 'en-US')).toMatch(/Thu.*Nov.*12.*2026/)
+    expect(calendarTitle('day', '2026-11-12', 'zh-CN')).toContain('11月12日')
   })
 })
 

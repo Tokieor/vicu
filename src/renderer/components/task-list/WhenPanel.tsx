@@ -3,7 +3,7 @@ import { CalendarRange, X } from 'lucide-react'
 import { t } from '@/lib/i18n'
 import { cn } from '@/lib/cn'
 import { startOfLocalDay, toLocalDate, type LocalDate } from '@/lib/due-dates'
-import { formatDateDisplay, formatDaySpan } from '@/lib/date-display'
+import { formatDateDisplay, formatSpanChip } from '@/lib/date-display'
 import { useDateFormat } from '@/hooks/use-date-format'
 import { useParserConfig } from '@/hooks/use-parser-config'
 import { readsChineseDates } from '@/lib/task-parser'
@@ -11,6 +11,7 @@ import { MonthCalendar } from './MonthCalendar'
 import {
   TIME_CHOICES,
   focusStaysInside,
+  instantOf,
   parseTimeText,
   parseWhenText,
   quickChoices,
@@ -18,7 +19,9 @@ import {
   timeLabel,
   whenText,
   withDate,
-  withTime,
+  withEndTime,
+  withStartTime,
+  type WhenParse,
   type WhenValue,
 } from '@/lib/when-logic'
 
@@ -34,8 +37,8 @@ interface WhenPanelProps {
   /** "Now" for the quick choices and for reading typed text. Defaults to the time the panel opened. */
   now?: Date
   /**
-   * 显示「时间段」一行：开始日期与结束日期（结束就是截止日期）。任务已经排了 time block 时不显示，
-   * 免得一次点击把时间块换成一段日期。
+   * 显示「时间段」一行：开始日期与结束日期（结束就是截止日期），两端都能带时刻。
+   * 同一天两端都带时刻时写成 Vikunja 的 time block（"13:00–18:00"）。
    */
   withSpan?: boolean
 }
@@ -63,8 +66,8 @@ export function WhenPanel({ value, onChange, now: nowProp, withSpan = false }: W
   // What the text reads as while the user types. It is shown in the grid and the time row but only
   // reaches the caller on Enter.
   const [typed, setTyped] = useState<WhenValue | null>(null)
-  /** 手打出来的时间段（"11月10日到11月15日"）：只用来把预览写成两端。 */
-  const [typedSpan, setTypedSpan] = useState<{ start: LocalDate; end: LocalDate } | null>(null)
+  /** 手打出来的时间段（"11月10日到11月15日" / "下午一点到六点"）：只用来把预览写成两端。 */
+  const [typedSpan, setTypedSpan] = useState<NonNullable<WhenParse['span']> | null>(null)
   const selected = typed ?? value
 
   // A day chosen or typed turns the month grid to it.
@@ -91,8 +94,18 @@ export function WhenPanel({ value, onChange, now: nowProp, withSpan = false }: W
   const onText = (raw: string) => {
     setText(raw)
     const parsed = parseWhenText(raw, now, fmt.locale, value.date, zhGrammar)
-    // 文本没提时间段时保留原来那个：改个时刻不该把开始那天弄丢。
-    setTyped(parsed ? { ...parsed.value, span: parsed.span ? { start: parsed.span.start } : selected.span } : null)
+    // 文本没提时间段时保留原来那个：改个时刻不该把开始那天弄丢。写了钟点的区间把开始
+    // 时刻一起带上（"下午一点到六点"），否则两格只填日期。
+    setTyped(
+      parsed
+        ? {
+            ...parsed.value,
+            span: parsed.span
+              ? { start: parsed.span.start, ...(parsed.span.startTime ? { time: parsed.span.startTime } : {}) }
+              : selected.span,
+          }
+        : null,
+    )
     setTypedSpan(parsed?.span ?? null)
     if (parsed?.value.date) showDay(parsed.value.date)
   }
@@ -120,23 +133,35 @@ export function WhenPanel({ value, onChange, now: nowProp, withSpan = false }: W
     setCustomInvalid(time === null)
     if (time === null) return
     setCustomTime('')
-    apply(withTime(selected, time, today), false)
+    setTime(time)
   }
 
   const typedHint = (() => {
     if (!text.trim() || text === whenText(selected, now, fmt)) return null
     if (!typed) return 'No date found'
-    // 读到时间段就直接报两端（"11月10日 – 11月15日"），比只说结束那天清楚。
+    // 读到时间段就直接报两端（"11月10日 – 11月15日" / "11月13日, 13:00–18:00"）。
     if (typedSpan) {
-      return `${formatDaySpan(startOfLocalDay(typedSpan.start), startOfLocalDay(typedSpan.end), now, fmt)}, Enter to set`
+      const from = typedSpan.startTime ? instantOf(typedSpan.start, typedSpan.startTime) : startOfLocalDay(typedSpan.start)
+      const to = typedSpan.endTime ? instantOf(typedSpan.end, typedSpan.endTime) : startOfLocalDay(typedSpan.end)
+      return `${formatSpanChip(from, to, now, fmt)}, Enter to set`
     }
     return `${whenText(typed, now, fmt)}, Enter to set`
   })()
 
-  const timeIsPreset = selected.time !== null && (TIME_CHOICES as readonly string[]).includes(selected.time)
-
   // --- 时间段 ------------------------------------------------------------------
   const spanOn = selected.span != null
+  /** 当前高亮的那一头：日历填它的日期，下面那排时间片填它的时刻。 */
+  const editingStart = spanOn && spanTarget === 'start'
+  const spanTime = editingStart ? (selected.span?.time ?? null) : selected.time
+  const timeIsPreset = spanTime !== null && (TIME_CHOICES as readonly string[]).includes(spanTime)
+
+  /** 设时间：没开时间段时改截止日期的时刻；开了就改高亮那一头。 */
+  const setTime = (time: string | null) =>
+    apply(
+      editingStart ? withStartTime(selected, time) : withEndTime(selected, time, today),
+      false,
+    )
+
   const band = spanDays(selected)
   const dayLabel = (day: LocalDate | null, empty: string) =>
     day ? formatDateDisplay('header.day', startOfLocalDay(day), now, true, fmt) : empty
@@ -158,13 +183,13 @@ export function WhenPanel({ value, onChange, now: nowProp, withSpan = false }: W
     }
     if (spanTarget === 'start') {
       const end = selected.date && selected.date > date ? selected.date : date
-      apply({ ...selected, date: end, span: { start: date } }, false)
+      apply({ ...selected, date: end, span: { ...selected.span, start: date } }, false)
       // 填完开始就接着填结束，两次点击画出一段。
       setSpanTarget('end')
       return
     }
     const start = selected.span.start && selected.span.start < date ? selected.span.start : date
-    apply({ ...selected, date, span: { start } }, false)
+    apply({ ...selected, date, span: { ...selected.span, start } }, false)
   }
 
   return (
@@ -233,14 +258,16 @@ export function WhenPanel({ value, onChange, now: nowProp, withSpan = false }: W
               <div className="flex items-center gap-1">
                 <SpanField
                   label={t('Start')}
-                  value={dayLabel(selected.span?.start ?? null, t('Not set'))}
+                  dateValue={dayLabel(selected.span?.start ?? null, t('Not set'))}
+                  timeValue={selected.span?.time ? timeLabel(selected.span.time, fmt) : t('All day')}
                   pressed={spanTarget === 'start'}
                   onClick={() => setSpanTarget('start')}
                 />
                 <span aria-hidden className="text-caption text-[var(--text-secondary)]">–</span>
                 <SpanField
                   label={t('End')}
-                  value={dayLabel(selected.date, t('Not set'))}
+                  dateValue={dayLabel(selected.date, t('Not set'))}
+                  timeValue={selected.time ? timeLabel(selected.time, fmt) : t('All day')}
                   pressed={spanTarget === 'end'}
                   onClick={() => setSpanTarget('end')}
                 />
@@ -248,25 +275,30 @@ export function WhenPanel({ value, onChange, now: nowProp, withSpan = false }: W
                   type="button"
                   onClick={clearSpan}
                   aria-label={t('Clear the start and end dates')}
-                  className="ml-auto flex h-7 w-7 items-center justify-center rounded-control text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-danger"
+                  className="ml-auto flex h-9 w-7 shrink-0 items-center justify-center rounded-control text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-danger"
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
               </div>
               <p className="mt-1 px-0.5 text-caption text-[var(--text-secondary)]">
-                {t('The end date is the due date. Pick a start day, then an end day.')}
+                {t('The end is the due date. Tap a field to set its day and time.')}
               </p>
             </>
           )}
         </div>
       )}
       <div className="border-t border-[var(--border-color)] pt-2" role="group" aria-label="Time">
+        {spanOn && (
+          <p className="mb-1 px-0.5 text-caption text-[var(--text-secondary)]">
+            {t(editingStart ? 'Start time' : 'End time')}
+          </p>
+        )}
         <div className="flex flex-wrap items-center gap-1">
-          <TimeChip pressed={selected.time === null} onClick={() => apply(withTime(selected, null, today), false)}>
+          <TimeChip pressed={spanTime === null} onClick={() => setTime(null)}>
             None
           </TimeChip>
           {TIME_CHOICES.map((time) => (
-            <TimeChip key={time} pressed={selected.time === time} onClick={() => apply(withTime(selected, time, today), false)}>
+            <TimeChip key={time} pressed={spanTime === time} onClick={() => setTime(time)}>
               {timeLabel(time, fmt)}
             </TimeChip>
           ))}
@@ -274,7 +306,7 @@ export function WhenPanel({ value, onChange, now: nowProp, withSpan = false }: W
             type="text"
             aria-label="Custom time"
             aria-invalid={customInvalid}
-            placeholder={selected.time !== null && !timeIsPreset ? timeLabel(selected.time, fmt) : 'Custom time'}
+            placeholder={spanTime !== null && !timeIsPreset ? timeLabel(spanTime, fmt) : 'Custom time'}
             value={customTime}
             onChange={(e) => { setCustomTime(e.target.value); setCustomInvalid(false) }}
             onKeyDown={(e) => {
@@ -287,7 +319,7 @@ export function WhenPanel({ value, onChange, now: nowProp, withSpan = false }: W
             spellCheck={false}
             className={cn(
               'h-7 min-w-[5.5rem] flex-1 rounded-chip border bg-[var(--bg-secondary)] px-2.5 text-chip text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]',
-              selected.time !== null && !timeIsPreset ? 'border-[var(--accent-blue)] placeholder:text-[var(--text-primary)]' : 'border-[var(--border-color)]',
+              spanTime !== null && !timeIsPreset ? 'border-[var(--accent-blue)] placeholder:text-[var(--text-primary)]' : 'border-[var(--border-color)]',
               customInvalid && 'border-danger',
             )}
           />
@@ -298,23 +330,38 @@ export function WhenPanel({ value, onChange, now: nowProp, withSpan = false }: W
   )
 }
 
-/** 时间段的一头：字段名 + 那一天；按下时日历就填这一头。 */
-function SpanField({ label, value, pressed, onClick }: { label: string; value: string; pressed: boolean; onClick: () => void }) {
+/** 时间段的一头：字段名 + 那一天 + 那一刻；按下时日历与时间片都填这一头。 */
+function SpanField({
+  label,
+  dateValue,
+  timeValue,
+  pressed,
+  onClick,
+}: {
+  label: string
+  dateValue: string
+  timeValue: string
+  pressed: boolean
+  onClick: () => void
+}) {
   return (
     <button
       type="button"
       aria-pressed={pressed}
-      aria-label={`${label}: ${value}`}
+      aria-label={`${label}: ${dateValue}, ${timeValue}`}
       onClick={onClick}
       className={cn(
-        'flex h-7 min-w-0 flex-1 items-center gap-1 rounded-chip border px-2 text-chip transition-colors',
+        'flex h-9 min-w-0 flex-1 items-center gap-1 rounded-chip border px-2 text-chip transition-colors',
         pressed
           ? 'border-[var(--accent-blue)] bg-[var(--bg-selected)] text-[var(--text-primary)]'
           : 'border-[var(--border-color)] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]',
       )}
     >
       <span className="shrink-0">{label}</span>
-      <span className="truncate text-[var(--text-primary)]">{value}</span>
+      <span className="flex min-w-0 flex-col items-start leading-tight">
+        <span className="w-full truncate text-[var(--text-primary)]">{dateValue}</span>
+        <span className="w-full truncate text-caption text-[var(--text-secondary)]">{timeValue}</span>
+      </span>
     </button>
   )
 }

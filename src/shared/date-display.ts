@@ -1,4 +1,4 @@
-import { diffLocalDays, toLocalDate } from './due-dates'
+import { diffLocalDays, isDateOnly, toLocalDate } from './due-dates'
 import { t } from './i18n'
 
 // How a due date or a completion time is phrased (docs/cross-app-semantics-v1.md section 8,
@@ -366,6 +366,19 @@ export function formatDaySpan(start: Date, end: Date, now: Date, fmt: DateFormat
   const p = phrasesFor(fmt.locale)
   const withYear = start.getFullYear() !== now.getFullYear() || end.getFullYear() !== now.getFullYear()
   return `${p.dayMonth(start, withYear)} – ${p.dayMonth(end, withYear)}`
+}
+
+/**
+ * The date chip of a span: two different days read as `formatDaySpan`; one day is written once,
+ * and when both ends carry a clock the chip says the time too ("Nov 13, 1:00 PM–6:00 PM").
+ * Without that, a same-day "1pm to 6pm" would read "Nov 13 – Nov 13".
+ */
+export function formatSpanChip(start: Date, end: Date, now: Date, fmt: DateFormat): string {
+  const p = phrasesFor(fmt.locale)
+  if (toLocalDate(start) !== toLocalDate(end)) return formatDaySpan(start, end, now, fmt)
+  const day = p.dayMonth(start, start.getFullYear() !== now.getFullYear())
+  const clocked = !isDateOnly(start.toISOString()) && !isDateOnly(end.toISOString())
+  return clocked ? `${day}, ${formatBlockRange(start, end, fmt)}` : day
 }
 
 /**

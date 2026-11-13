@@ -2,7 +2,6 @@ import { useRef, useState, type RefObject } from 'react'
 import { X, Repeat } from 'lucide-react'
 import { NULL_DATE } from '@/lib/constants'
 import { detectRecurrencePreset, formatRecurrenceLabel } from '@/lib/recurrence'
-import { isTimeBlock } from '../../../shared/time-blocks'
 import { dueOfWhenValue, spanOfWhenValue, whenValueOf, type WhenValue } from '@/lib/when-logic'
 import { Button } from '../shared/Button'
 import { Popover, type PopoverCloseReason } from '../overlay/Popover'
@@ -32,9 +31,9 @@ interface WhenPopoverProps {
    */
   allowClear?: boolean
   /**
-   * The task's start date, and its end date when it has one: the panel then offers a span of days
-   * (see `withSpan`). A start/end pair that is a time block shows no span — that time belongs to
-   * the Plan screen, and a date span would replace it.
+   * The task's start and end dates. The panel offers a span of days over them; a same-day time
+   * block opens as that span with both clocks filled in, so it can be edited right here instead
+   * of being hidden (the Plan screen's drag is no longer the only way to write one).
    */
   startDate?: string | null
   endDate?: string | null
@@ -68,9 +67,8 @@ export function WhenPopover({
   onSpanChange,
 }: WhenPopoverProps) {
   const repeatButtonRef = useRef<HTMLButtonElement>(null)
-  const block = isTimeBlock(startDate, endDate)
-  const withSpan = !!onSpanChange && !block
-  const [value, setValue] = useState<WhenValue>(() => (withSpan ? whenValueOf(currentDate, startDate) : whenValueOf(currentDate)))
+  const withSpan = !!onSpanChange
+  const [value, setValue] = useState<WhenValue>(() => whenValueOf(currentDate, startDate, endDate))
   const [showRecurrence, setShowRecurrence] = useState(false)
   /** Whether the span row was on: turning it off must write the null dates, once. */
   const hadSpan = useRef(value.span != null)

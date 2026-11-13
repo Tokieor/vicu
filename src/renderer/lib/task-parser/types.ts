@@ -30,14 +30,16 @@ export interface ParsedRecurrence {
 }
 
 /**
- * 文本写出的时间段（「11月10日到11月15日」「10号至15号」）：开始与结束两天。
+ * 文本写出的时间段（「11月10日到11月15日」「10号至15号」「下午一点到六点」）：开始与结束。
  * 只有中文解析（`zhGrammar`）会读出来——英文按契约没有区间（"friday to sunday" 就是周五）。
  */
 export interface DateSpan {
-  /** 开始那天的本地 12:00。 */
+  /** 开始那天；日期段是本地 12:00，时刻段是开始的钟点。 */
   start: Date
-  /** 结束那天的本地 12:00；截止日期取这一天。 */
+  /** 结束那天；截止日期取这一天。日期段是本地 12:00，时刻段是结束的钟点。 */
   end: Date
+  /** 两端写的是钟点（"下午一点到六点"），写任务字段时保留时刻，不压成 date-only。 */
+  clocked?: boolean
 }
 
 export interface ParseResult {

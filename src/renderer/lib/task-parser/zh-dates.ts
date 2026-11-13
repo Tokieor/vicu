@@ -31,6 +31,7 @@ export type ZhNote =
   | 'time-passed-tomorrow'
   | 'date-only'
   | 'date-range'
+  | 'clock-range'
 
 export interface ZhDateMatch {
   /** 命中区间起点（含）。 */
@@ -49,6 +50,8 @@ export interface ZhDateMatch {
    * 这时 `date` 是结束那天——截止日期就是它，时间段只是多出开始那天。
    */
   range?: { from: Date; to: Date }
+  /** `range` 的两端是钟点而不是日期（"下午一点到六点"）：写字段时要保留时刻。 */
+  rangeClocked?: boolean
 }
 
 const HAN_RE = /[\u4e00-\u9fa5]/
@@ -475,6 +478,38 @@ function matchClockPhrase(text: string, from: number, inherited: ZhPeriod | null
 
 // --- 对外接口 -------------------------------------------------------------------------------
 
+interface ClockRangeCandidate {
+  /** 命中区间（含日期短语时从它算起）。 */
+  start: number
+  end: number
+  /** 两端距本地零点的分钟数。 */
+  fromMinute: number
+  toMinute: number
+}
+
+/**
+ * 两个时刻中间只隔一个连词（"下午一点到六点"、"13:00至18:00"）：同一天的时间段。
+ * 第二个时刻继承第一个的时段词，所以「下午一点到六点」是 13:00–18:00，而不是 13:00–06:00。
+ * 结束不晚于开始、或一段超过 12 小时（跨天的写法）都不读，交给原来的单时刻规则。
+ */
+function matchClockRange(text: string, from: number, inherited: ZhPeriod | null): ClockRangeCandidate | null {
+  const first = matchClockPhrase(text, from, inherited)
+  if (!first || first.hour === null) return null
+  const connector = /^\s*(?:到|至|~|～|-|–|—)\s*/.exec(text.slice(first.end))
+  if (!connector) return null
+  const second = matchClockPhrase(text, first.end + connector[0].length, first.period ?? inherited)
+  if (!second || second.hour === null) return null
+
+  const a = first.explicitHour ? { hour: first.hour } : toHour24(first.hour, first.period)
+  const b = second.explicitHour ? { hour: second.hour } : toHour24(second.hour, second.period)
+  const fromMinute = a.hour * 60 + first.minute
+  let toMinute = b.hour * 60 + second.minute
+  // 「下午1点到1点」这类没写第二个时段的，把 12 小时内的 1 点算成同一段下午。
+  if (toMinute <= fromMinute && b.hour < 12 && a.hour >= 12) toMinute += 12 * 60
+  if (toMinute <= fromMinute || toMinute - fromMinute > 12 * 60) return null
+  return { start: first.start, end: second.end, fromMinute, toMinute }
+}
+
 /**
  * 解析一段可能含中文时间表达的文本。
  *
@@ -511,6 +546,28 @@ export function parseZhDate(text: string, reference: Date = new Date()): ZhDateM
     const tail = text.slice(clockFrom)
     const weekday = /^[\s,、]*周[一二三四五六日天]/.exec(tail)
     if (weekday) clockFrom += weekday[0].length
+  }
+
+  // 同一天的两个时刻（"下午一点到六点工作"）：整段读成时间段，结束那个钟点就是截止时刻。
+  // 放在单时刻之前，否则「到六点」会留在标题里，开始时刻被当成唯一的截止时刻。
+  const clockRange = matchClockRange(text, clockFrom, dateHit?.period ?? null)
+  if (clockRange) {
+    let day = dateHit ? dateHit.date : today
+    const firstAt = atLocal(day, Math.floor(clockRange.fromMinute / 60), clockRange.fromMinute % 60)
+    // 与单时刻一致：没写日期、起点今天已过，就落到明天。
+    if (!dateHit && firstAt.getTime() < reference.getTime()) day = addLocalDays(day, 1)
+    const from = atLocal(day, Math.floor(clockRange.fromMinute / 60), clockRange.fromMinute % 60)
+    const to = atLocal(day, Math.floor(clockRange.toMinute / 60), clockRange.toMinute % 60)
+    return {
+      start: dateHit ? dateHit.start : clockRange.start,
+      end: clockRange.end,
+      date: to,
+      hasTime: true,
+      hasDate: Boolean(dateHit),
+      notes: ['clock-range'],
+      range: { from, to },
+      rangeClocked: true,
+    }
   }
 
   const clockHit = matchClockPhrase(text, clockFrom, dateHit?.period ?? null)

@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react'
 import { Navigate, useNavigate, useSearch } from '@tanstack/react-router'
 import { CalendarHeader } from '@/components/calendar/CalendarHeader'
 import { AgendaList } from '@/components/calendar/AgendaList'
+import { DayTimeline } from '@/components/calendar/DayTimeline'
 import { MonthGrid } from '@/components/calendar/MonthGrid'
 import { WeekTimeline } from '@/components/calendar/WeekTimeline'
 import { useAppConfig } from '@/hooks/use-app-config'
@@ -87,7 +88,7 @@ function CalendarScreen({ config }: { config: AppConfig }) {
     update.mutate({ id: task.id, changes: toTaskChanges(changes), original: task })
   }
 
-  // M / W / A switch the projection, the arrows turn the page, T comes back to today — the same
+  // M / W / D / A switch the projection, the arrows turn the page, T comes back to today — the same
   // habits the Plan screen has (docs/calendar-views-plan.md 7).
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -101,6 +102,9 @@ function CalendarScreen({ config }: { config: AppConfig }) {
           break
         case 'w':
           setView('week')
+          break
+        case 'd':
+          setView('day')
           break
         case 'a':
           setView('agenda')
@@ -150,7 +154,7 @@ function CalendarScreen({ config }: { config: AppConfig }) {
             today={today}
             onChange={change}
             showRoutines={calendarShowsRoutines(config)}
-            onOpenDay={(day) => go({ view: 'agenda', d: day })}
+            onOpenDay={(day) => go({ view: 'day', d: day })}
             onOpenTask={(task) => useSelectionStore.getState().requestOpenTask(task.id)}
             onMore={() => go({ d: shiftAnchor('agenda', anchor, 1, options) })}
           />
@@ -169,7 +173,7 @@ interface CalendarBodyProps {
   today: LocalDate
   onChange: (task: Task, changes: BlockChanges) => void
   showRoutines: boolean
-  /** Show one day on its own: the agenda scrolls to it (the month's day click). */
+  /** Show one day on its own: the day view opens it (the month's day click, a week's column). */
   onOpenDay: (day: LocalDate) => void
   /** Open a task where it lives, the way a reminder does. */
   onOpenTask: (task: Task) => void
@@ -198,6 +202,14 @@ function CalendarBody({
           selectedDay={anchor}
           tasks={tasks}
           onOpenDay={onOpenDay}
+          onOpenTask={onOpenTask}
+          onChange={onChange}
+          showRoutines={showRoutines}
+        />
+      ) : view === 'day' ? (
+        <DayTimeline
+          day={range.days[0]}
+          tasks={tasks}
           onOpenTask={onOpenTask}
           onChange={onChange}
           showRoutines={showRoutines}

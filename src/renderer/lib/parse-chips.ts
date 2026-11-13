@@ -1,6 +1,6 @@
 import type { ParseResult, TokenType } from './task-parser'
 import { formatDateChip } from './date-utils'
-import { formatBlockRange, formatDaySpan, type DateFormat } from './date-display'
+import { formatBlockRange, formatSpanChip, type DateFormat } from './date-display'
 import { getDateFormat } from './date-format'
 import { locationReminderLabel, type LocationTrigger } from '../../shared/synced-prefs'
 
@@ -41,7 +41,7 @@ export function parseChips(result: ParseResult, fmt: DateFormat = getDateFormat(
   const chips: ChipData[] = []
   if (result.dueDate) {
     const label = result.span
-      ? formatDaySpan(result.span.start, result.span.end, now, fmt)
+      ? formatSpanChip(result.span.start, result.span.end, now, fmt)
       : formatDateChip(result.dueDate, !result.dueHasTime, now, fmt)
     chips.push({ type: 'date', label, key: 'date', source: 'text' })
   }

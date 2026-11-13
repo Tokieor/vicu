@@ -86,9 +86,11 @@ export function calendarRange(
       ? monthGridDays(anchor)
       : view === 'week'
         ? Array.from({ length: 7 }, (_, index) => addLocalDays(startOfWeek(anchor), index))
-        : Array.from({ length: Math.max(1, options.agendaDays) }, (_, index) =>
-            addLocalDays(agendaStart(anchor, options.today), index)
-          )
+        : view === 'day'
+          ? [anchor]
+          : Array.from({ length: Math.max(1, options.agendaDays) }, (_, index) =>
+              addLocalDays(agendaStart(anchor, options.today), index)
+            )
   return { start: days[0], end: days[days.length - 1], days }
 }
 
@@ -98,7 +100,7 @@ export function agendaStart(anchor: LocalDate, today: LocalDate): LocalDate {
   return diffLocalDays(floor, anchor) < 0 ? floor : anchor
 }
 
-/** Where the arrows go: a month, a week, or an agenda's worth of days either way. */
+/** Where the arrows go: a month, a week, one day, or an agenda's worth of days either way. */
 export function shiftAnchor(
   view: CalendarViewKind,
   anchor: LocalDate,
@@ -107,6 +109,7 @@ export function shiftAnchor(
 ): LocalDate {
   if (view === 'month') return addMonths(anchor, direction)
   if (view === 'week') return addLocalDays(anchor, 7 * direction)
+  if (view === 'day') return addLocalDays(anchor, direction)
   return addLocalDays(anchor, Math.max(1, options.agendaDays) * direction)
 }
 
@@ -117,7 +120,7 @@ export function pickMonth(anchor: LocalDate, year: number, month: number): Local
   return toLocalDate(new Date(year, month - 1, day))
 }
 
-/** The title a view shows: "November 2026", "3–9 Nov 2026", "12 Nov 2026". */
+/** The title a view shows: "November 2026", "3–9 Nov 2026", "Fri 13 Nov 2026", "12 Nov 2026". */
 export function calendarTitle(
   view: CalendarViewKind,
   anchor: LocalDate,
@@ -138,6 +141,9 @@ export function calendarTitle(
     const endText = sameMonth ? dayOnly.format(end) : monthDay.format(end)
     const year = start.getFullYear() === end.getFullYear() ? '' : ` ${end.getFullYear()}`
     return `${monthDay.format(start)} – ${endText}${year}`
+  }
+  if (view === 'day') {
+    return new Intl.DateTimeFormat(locale, { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' }).format(date)
   }
   return new Intl.DateTimeFormat(locale, { day: 'numeric', month: 'long', year: 'numeric' }).format(date)
 }

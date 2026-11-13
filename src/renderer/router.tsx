@@ -93,8 +93,8 @@ const calendarRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/calendar',
   component: lazyRouteComponent(() => import('@/views/CalendarView'), 'CalendarView'),
-  validateSearch: (search: Record<string, unknown>): { view?: 'month' | 'week' | 'agenda'; d?: string } => ({
-    view: search.view === 'month' || search.view === 'week' || search.view === 'agenda' ? search.view : undefined,
+  validateSearch: (search: Record<string, unknown>): { view?: 'month' | 'week' | 'day' | 'agenda'; d?: string } => ({
+    view: search.view === 'month' || search.view === 'week' || search.view === 'day' || search.view === 'agenda' ? search.view : undefined,
     d: typeof search.d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(search.d) ? search.d : undefined,
   }),
 })

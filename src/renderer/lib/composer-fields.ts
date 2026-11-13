@@ -3,7 +3,7 @@ import { isDateOnly, isNoDueDate, parsedDue } from './due-dates'
 import { formatDateChip } from './date-utils'
 import { detectRecurrencePreset, formatRecurrenceLabel } from './recurrence'
 import { blockFields, recurrenceToVikunja, spanFields, type ParseResult } from './task-parser'
-import { formatBlockRange, formatDaySpan, type DateFormat } from './date-display'
+import { formatBlockRange, formatSpanChip, type DateFormat } from './date-display'
 import { placeChipName, priorityChipName, recurrenceChipName, type ChipData, type ChipSource } from './parse-chips'
 
 // One source of truth for the new-task composer (card 3.5). A field shows, and saves, what the
@@ -158,10 +158,11 @@ export function composerChips({ fields, parsed, chipLabels, projectTitle, fmt, n
       type: 'date',
       key: 'date',
       source: source(fields.dueSource),
-      // A span of days says both ends ("Nov 10 – Nov 15"); one day says its date.
-      label: fields.span
-        ? formatDaySpan(new Date(fields.span.start_date), new Date(fields.span.end_date), now, fmt)
-        : formatDateChip(new Date(fields.dueDate), isDateOnly(fields.dueDate), now, fmt),
+        // A span of days says both ends ("Nov 10 – Nov 15"); one day says its date, and a
+        // same-day block adds the clocks ("Nov 13, 13:00–18:00").
+        label: fields.span
+          ? formatSpanChip(new Date(fields.span.start_date), new Date(fields.span.end_date), now, fmt)
+          : formatDateChip(new Date(fields.dueDate), isDateOnly(fields.dueDate), now, fmt),
     })
   }
   if (fields.block && parsed?.block) {

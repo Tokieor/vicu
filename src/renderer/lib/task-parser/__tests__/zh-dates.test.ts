@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest'
 import { toLocalDate } from '../../due-dates'
 import { parseTimeText, parseWhenText } from '../../when-logic'
-import { DEFAULT_PARSER_CONFIG, parse } from '../index'
+import { DEFAULT_PARSER_CONFIG, parse, spanFields } from '../index'
 import { parseChineseNumber, parseZhClock, parseZhDate } from '../zh-dates'
 
 const NOW = new Date(2026, 10, 11, 9, 0, 0)
@@ -309,9 +309,10 @@ describe('时间段', () => {
     expect(span('周一~周五')).toEqual({ from: '2026-11-16', to: '2026-11-20' })
   })
 
-  it('不是时间段的写法照旧', () => {
+  it('不是跨天时间段的写法：单个日期照旧，时刻区间现在按同一天读', () => {
     expect(span('11月15日')).toBeNull()
-    expect(span('明天下午3点到5点')).toBeNull()
+    expect(span('明天下午3点到5点')).toEqual({ from: '2026-11-12', to: '2026-11-12' })
+    expect(parseZhDate('明天下午3点到5点', NOW)?.rangeClocked).toBe(true)
     // 连词后面不是日期（"到家"）就不算。
     expect(span('明天到家')).toBeNull()
   })
@@ -355,5 +356,48 @@ describe('When 面板的文本输入', () => {
     // 中文界面写的是「今天，11月11日，13:05」；关掉中文语法后改时间再回车，日期不能丢。
     expect(parseWhenText('今天，11月11日，13:05', NOW, 'zh-CN', '2026-11-11')?.value).toEqual({ date: '2026-11-11', time: '13:05' })
     expect(parseWhenText('明天，11月12日，09:00', NOW, 'zh-CN', '2026-11-12')?.value).toEqual({ date: '2026-11-12', time: '09:00' })
+  })
+})
+
+describe('同一天的时刻区间（下午一点到六点）', () => {
+  const clockRange = (text: string) => {
+    const hit = parseZhDate(text, NOW)
+    return hit?.range ? { from: clock(hit.range.from), to: clock(hit.range.to), clocked: hit.rangeClocked } : null
+  }
+
+  it('第二个时刻继承第一个的时段词', () => {
+    expect(clockRange('下午一点到六点')).toEqual({ from: '13:00', to: '18:00', clocked: true })
+    expect(clockRange('下午一点至六点')).toEqual({ from: '13:00', to: '18:00', clocked: true })
+    expect(clockRange('13:00至18:00')).toEqual({ from: '13:00', to: '18:00', clocked: true })
+    expect(clockRange('9点到11点')).toEqual({ from: '09:00', to: '11:00', clocked: true })
+  })
+
+  it('写了日期时落在那一天，截止时刻是结束那个钟点', () => {
+    expect(day(parseZhDate('明天下午1点到6点', NOW)?.date ?? null)).toBe('2026-11-12')
+    expect(clock(parseZhDate('明天下午1点到6点', NOW)?.date ?? null)).toBe('18:00')
+    expect(parseZhDate('下午一点到六点', NOW)?.notes).toContain('clock-range')
+    expect(parseZhDate('下午一点到六点', NOW)?.hasTime).toBe(true)
+  })
+
+  it('结束不晚于开始、或超过 12 小时就不读成时刻区间', () => {
+    expect(clockRange('下午6点到1点')).toBeNull()
+    expect(clockRange('早上8点到晚上11点')).toBeNull()
+  })
+
+  it('任务标题里的时间段写成带时刻的 start_date / end_date', () => {
+    const parsed = parse('下午一点到六点工作', ZH, NOW)
+    expect(parsed.title).toBe('工作')
+    const fields = spanFields(parsed)!
+    expect(clock(new Date(fields.start_date))).toBe('13:00')
+    expect(clock(new Date(fields.end_date))).toBe('18:00')
+    expect(clock(parsed.dueDate)).toBe('18:00')
+    expect(parse('下午一点到六点工作', DEFAULT_PARSER_CONFIG, NOW).span).toBeNull()
+  })
+
+  it('面板文本输入直接给出两端时刻', () => {
+    const hit = parseWhenText('下午一点到六点', NOW, undefined, null, true)
+    expect(hit?.value).toEqual({ date: '2026-11-11', time: '18:00', span: { start: '2026-11-11', time: '13:00' } })
+    expect(hit?.span).toEqual({ start: '2026-11-11', end: '2026-11-11', startTime: '13:00', endTime: '18:00' })
+    expect(parseWhenText('下午一点到六点', NOW, undefined, null, false)).toBeNull()
   })
 })

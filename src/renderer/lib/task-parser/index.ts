@@ -198,11 +198,16 @@ export function blockFields(result: Pick<ParseResult, 'block'> | null | undefine
 }
 
 /**
- * A parsed date span as the fields of a task: the two days, both date-only (local 23:59:59).
+ * A parsed date span as the fields of a task: the two days, both date-only (local 23:59:59),
+ * unless the text named two clocks on one day ("下午一点到六点"): then the clocks are kept, so
+ * `start_date`/`end_date` are a time block and `due_date` stays the end (the same value).
  * Null when the text named no span.
  */
 export function spanFields(result: Pick<ParseResult, 'span'> | null | undefined): { start_date: string; end_date: string } | null {
   if (!result?.span) return null
+  if (result.span.clocked) {
+    return { start_date: result.span.start.toISOString(), end_date: result.span.end.toISOString() }
+  }
   return { start_date: dateOnlyDue(toLocalDate(result.span.start)), end_date: dateOnlyDue(toLocalDate(result.span.end)) }
 }
 

@@ -21,16 +21,19 @@ import {
 import { formatMinutesOfDay } from './date-utils'
 import { extractDate } from './task-parser/extract-dates'
 import { parseZhClock } from './task-parser/zh-dates'
+import { blockOf } from '../../shared/time-blocks'
 
 // The pure rules of the When panel (card 3.4a1): what a picked day and time mean as a due date,
 // the month grid and its keyboard moves, the quick choices, and how typed text becomes a
 // selection (through the quick-add parser's own date extraction, so the panel and the composer
 // read "tomorrow 9am" the same way). No React and no DOM.
 
-/** 时间段：开始那天。结束那天就是 `date`——面板把结束日期和截止日期当成同一个值。 */
+/** 时间段：开始那天和它的时刻。结束那天就是 `date`，时刻就是 `time`。 */
 export interface WhenSpan {
   /** 还没选开始那天时为 null。 */
   start: LocalDate | null
+  /** 开始的时刻（"HH:mm"）；null 表示只写了日期。 */
+  time?: string | null
 }
 
 /** A picked day and, optionally, a time of day ("HH:mm", 24-hour). No time means date-only. */
@@ -39,7 +42,8 @@ export interface WhenValue {
   time: string | null
   /**
    * 时间段（开始–结束）。没有这一项或为 null：不设时间段；`{ start: null }`：时间段开着，
-   * 但还没选开始那天。
+   * 但还没选开始那天。同一天、两端都写了时刻时，这就是 Vikunja 的 time block
+   * （"下午一点到六点" → start_date 13:00、end_date 18:00、due_date 18:00）。
    */
   span?: WhenSpan | null
 }
@@ -117,14 +121,30 @@ export function whenValueOfDue(due: string | null | undefined): WhenValue {
 }
 
 /**
- * The panel's value for a stored task: the due date, plus the start date when the task has a span.
- * A start that is part of a time block is left out — that is a block, not a span of days, and the
- * panel does not offer a span over it.
+ * The panel's value for a stored task: the due date, plus the start of a span of days. A task with
+ * a same-day time block reads as a span whose two ends are its clocks, so the panel can edit it
+ * instead of hiding the row — the block is exactly the "1pm to 6pm" the row now writes.
  */
-export function whenValueOf(due: string | null | undefined, start?: string | null): WhenValue {
+export function whenValueOf(due: string | null | undefined, start?: string | null, end?: string | null): WhenValue {
   const value = whenValueOfDue(due)
   if (!start || isNoDueDate(start)) return value
-  return { ...value, span: { start: toLocalDate(new Date(start)) } }
+  const from = new Date(start)
+  const block = blockOf({ start_date: start, end_date: end ?? null })
+  // A block ending exactly at midnight belongs to the next local day; the panel's clock cannot
+  // hold that, so it stays a plain span of days (the Plan screen keeps that block as it was).
+  if (block && toLocalDate(block.end) === toLocalDate(from)) {
+    return {
+      date: toLocalDate(block.end),
+      time: clockTextOf(block.end),
+      span: { start: toLocalDate(from), time: clockTextOf(from) },
+    }
+  }
+  const clock = isDateOnly(start) ? null : clockTextOf(from)
+  return { ...value, span: clock ? { start: toLocalDate(from), time: clock } : { start: toLocalDate(from) } }
+}
+
+function clockTextOf(at: Date): string {
+  return `${pad2(at.getHours())}:${pad2(at.getMinutes())}`
 }
 
 /** The local instant of a day and a time of day. */
@@ -156,15 +176,51 @@ export function withTime(value: WhenValue, time: string | null, today: LocalDate
 }
 
 /**
- * 时间段写成任务字段：开始与结束两天（结束用截止日期那个值，可能带时刻）。
- * 没有时间段时返回 null——调用方据此「不动」start_date / end_date。
+ * 时间段写成任务字段：开始那天（写了时刻就带上时刻），结束那天用截止日期那个值。
+ * 同一天、开始有时刻、结束没时刻时，开始那天不能写成 23:59:59——那会在结束时刻之后，
+ * 于是改成本地零点（`isDateOnly` 同样认它）。没有时间段时返回 null，调用方据此「不动」
+ * start_date / end_date。
  */
 export function spanOfWhenValue(value: WhenValue): { start_date: string | null; end_date: string | null } | null {
   if (!value.span) return null
-  return {
-    start_date: value.span.start ? dateOnlyDue(value.span.start) : null,
-    end_date: dueOfWhenValue(value),
+  const start = value.span.start
+  let start_date: string | null = null
+  if (start) {
+    if (value.span.time) start_date = instantOf(start, value.span.time).toISOString()
+    else if (value.time && start === value.date) start_date = startOfLocalDay(start).toISOString()
+    else start_date = dateOnlyDue(start)
   }
+  return { start_date, end_date: dueOfWhenValue(value) }
+}
+
+/**
+ * 设「开始」那一头的时刻。同一天里只给了一头时刻时，另一头补一小时：面板写出来的一定是
+ * 两端齐全的时间段（13:00–14:00），不会落成 end 早于 start 的半截数据。清掉时刻不补。
+ */
+export function withStartTime(value: WhenValue, time: string | null): WhenValue {
+  if (!value.span) return value
+  const next: WhenValue = { ...value, span: { ...value.span, time } }
+  if (time && value.span.start === value.date && !value.time) {
+    next.time = shiftHour(time, 1)
+  }
+  return next
+}
+
+/** 设「结束」那一头的时刻，也就是截止日期的时刻。 */
+export function withEndTime(value: WhenValue, time: string | null, today: LocalDate): WhenValue {
+  const next = withTime(value, time, today)
+  if (!value.span || !time) return next
+  if (value.span.start === next.date && !value.span.time) {
+    return { ...next, span: { ...value.span, time: shiftHour(time, -1) } }
+  }
+  return next
+}
+
+/** "HH:mm" moved by whole hours, held inside the day. */
+function shiftHour(time: string, hours: number): string {
+  const minutes = timeToMinutes(time) ?? 0
+  const moved = Math.max(0, Math.min(23 * 60 + 59, minutes + hours * 60))
+  return `${pad2(Math.floor(moved / 60))}:${pad2(moved % 60)}`
 }
 
 /** 时间段的底色范围：开始到结束（结束就是 `date`）；两端缺一个就没有范围。 */
@@ -175,7 +231,12 @@ export function spanDays(value: WhenValue): { from: LocalDate; to: LocalDate } |
 }
 
 export function sameValue(a: WhenValue, b: WhenValue): boolean {
-  return a.date === b.date && a.time === b.time && (a.span?.start ?? null) === (b.span?.start ?? null)
+  return (
+    a.date === b.date &&
+    a.time === b.time &&
+    (a.span?.start ?? null) === (b.span?.start ?? null) &&
+    (a.span?.time ?? null) === (b.span?.time ?? null)
+  )
 }
 
 // --- Month grid -------------------------------------------------------------------------------
@@ -287,8 +348,14 @@ export interface WhenParse {
   value: WhenValue
   /** The part of the text that was read as a date or time. */
   matched: string
-  /** 文本写出的时间段（"11月10日到11月15日"）：两端都是本地日期，`value.date` 是结束那天。 */
-  span?: { start: LocalDate; end: LocalDate } | null
+  /** 文本写出的时间段（"11月10日到11月15日"）：两端都是本地日期，`value.date` 是结束那天。
+   * 两端写了钟点（"下午一点到六点"）时还带 startTime / endTime。 */
+  span?: {
+    start: LocalDate
+    end: LocalDate
+    startTime?: string | null
+    endTime?: string | null
+  } | null
 }
 
 /**
@@ -314,13 +381,25 @@ export function parseWhenText(
   const date = toLocalDate(found.dueDate)
   const time = found.hasTime ? `${pad2(found.dueDate.getHours())}:${pad2(found.dueDate.getMinutes())}` : null
   const token = found.tokens[0]
-  // 时间段（"11月10日到11月15日"）：截止日期是结束那天，开始那天另外记在 value.span 上。
-  const span = found.span ? { start: toLocalDate(found.span.start), end: toLocalDate(found.span.end) } : null
-  return {
-    value: span ? { date: span.end, time: null, span: { start: span.start } } : { date, time },
-    matched: token ? token.raw : text.trim(),
-    span,
-  }
+  // 时间段（"11月10日到11月15日" / "下午一点到六点"）：截止日期是结束那天，开始那天另外
+  // 记在 value.span 上；写了钟点的那段把两端时刻也带上，面板才能填进「开始/结束」两格。
+  const span = found.span
+    ? {
+        start: toLocalDate(found.span.start),
+        end: toLocalDate(found.span.end),
+        ...(found.span.clocked
+          ? { startTime: clockTextOf(found.span.start), endTime: clockTextOf(found.span.end) }
+          : {}),
+      }
+    : null
+  const value: WhenValue = span
+    ? {
+        date: span.end,
+        time: span.endTime ?? null,
+        span: span.startTime ? { start: span.start, time: span.startTime } : { start: span.start },
+      }
+    : { date, time }
+  return { value, matched: token ? token.raw : text.trim(), span }
 }
 
 /**

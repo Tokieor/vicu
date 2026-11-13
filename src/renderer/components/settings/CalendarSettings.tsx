@@ -20,6 +20,7 @@ interface CalendarSettingsProps {
 const VIEWS: { value: CalendarViewKind; label: string }[] = [
   { value: 'month', label: 'Month' },
   { value: 'week', label: 'Week' },
+  { value: 'day', label: 'Day view' },
   { value: 'agenda', label: 'Agenda' },
 ]
 

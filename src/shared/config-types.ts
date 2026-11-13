@@ -400,7 +400,7 @@ export interface AppConfig {
   /** A notification in the evening to plan tomorrow; off unless true. Local time, `HH:MM`. */
   planner_nudge?: string | null
   /**
-   * The calendar views (month, week, agenda) in the sidebar: per device, off by default.
+   * The calendar views (month, week, day, agenda) in the sidebar: per device, off by default.
    * See `docs/calendar-views-plan.md`; it is the browsing half of the planner.
    */
   calendar_enabled?: boolean
@@ -446,8 +446,9 @@ export function isPlannerEnabled(config: Pick<AppConfig, 'planner_enabled' | 'st
   return config?.planner_enabled === true && config.standalone_mode !== true
 }
 
-/** The three calendar projections (`docs/calendar-views-plan.md` section 3). */
-export type CalendarViewKind = 'month' | 'week' | 'agenda'
+/** The calendar's projections (`docs/calendar-views-plan.md` section 3). The day view is one
+ * column of the planner's timeline, with every hour on the left. */
+export type CalendarViewKind = 'month' | 'week' | 'day' | 'agenda'
 
 /** The agenda's span in days, from today forward. */
 export const CALENDAR_AGENDA_DAYS = [7, 14, 30] as const
@@ -466,7 +467,7 @@ export function isCalendarEnabled(
 /** The calendar's last view; a missing or unknown value falls back to the month. */
 export function readCalendarView(config: Pick<AppConfig, 'calendar_view'> | null | undefined): CalendarViewKind {
   const view = config?.calendar_view
-  return view === 'week' || view === 'agenda' ? view : 'month'
+  return view === 'week' || view === 'day' || view === 'agenda' ? view : 'month'
 }
 
 /** The agenda span; a missing or unknown value falls back to 7 days. */

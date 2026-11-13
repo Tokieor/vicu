@@ -133,7 +133,7 @@ export function extractDate(
       return {
         dueDate: zh.date,
         hasTime: zh.hasTime,
-        span: zh.range ? { start: zh.range.from, end: zh.range.to } : null,
+        span: zh.range ? { start: zh.range.from, end: zh.range.to, clocked: zh.rangeClocked === true } : null,
         tokens,
       }
     }
