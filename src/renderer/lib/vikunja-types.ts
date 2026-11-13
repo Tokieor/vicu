@@ -213,6 +213,8 @@ export type ApiResult<T> =
 export type {
   AppConfig,
   AuthMethod,
+  CalendarAgendaDays,
+  CalendarViewKind,
   CustomList,
   CustomListFilter,
   CustomListSortField,
@@ -226,12 +228,17 @@ export type {
 } from '../../shared/config-types'
 export {
   CUSTOM_LIST_SORT_FIELDS,
+  CALENDAR_AGENDA_DAYS,
   SIDEBAR_HIDEABLE_LISTS,
+  calendarShowsRoutines,
+  isCalendarEnabled,
   isHiddenFromSidebar,
   isQuickEntryEnabled,
   isQuickViewEnabled,
   isPlannerEnabled,
   isRoutinesEnabled,
+  readCalendarAgendaDays,
+  readCalendarView,
   showRoutinesInToday,
   withSidebarListHidden,
 } from '../../shared/config-types'

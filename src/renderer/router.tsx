@@ -87,6 +87,18 @@ const planRoute = createRoute({
   component: lazyRouteComponent(() => import('@/views/PlanView'), 'PlanView'),
 })
 
+// The calendar (docs/calendar-views-plan.md): month, week or agenda, with the day in the URL so a
+// link or a reload lands on the same range.
+const calendarRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/calendar',
+  component: lazyRouteComponent(() => import('@/views/CalendarView'), 'CalendarView'),
+  validateSearch: (search: Record<string, unknown>): { view?: 'month' | 'week' | 'agenda'; d?: string } => ({
+    view: search.view === 'month' || search.view === 'week' || search.view === 'agenda' ? search.view : undefined,
+    d: typeof search.d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(search.d) ? search.d : undefined,
+  }),
+})
+
 const logbookRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/logbook',
@@ -137,6 +149,7 @@ const routeTree = rootRoute.addChildren([
   guidedRoute,
   weeklyReviewRoute,
   planRoute,
+  calendarRoute,
   logbookRoute,
   projectRoute,
   tagRoute,

@@ -94,10 +94,14 @@ export interface PlanRoutine {
   done: boolean
 }
 
-/** Routines on the timeline: small pills at their times, never busy (contract 16.6). */
-export function usePlanRoutines(days: readonly LocalDate[]): PlanRoutine[] {
+/**
+ * Routines on the timeline: small pills at their times, never busy (contract 16.6).
+ * `settingOn` is the calendar's own switch; without it the Plan screen's setting decides, so its
+ * behaviour is unchanged.
+ */
+export function usePlanRoutines(days: readonly LocalDate[], settingOn?: boolean): PlanRoutine[] {
   const { data: config } = useAppConfig()
-  const on = isRoutinesEnabled(config) && config?.planner_show_routines !== false
+  const on = isRoutinesEnabled(config) && (settingOn ?? config?.planner_show_routines !== false)
   const routines = useRoutines({ enabled: on })
   const today = toLocalDate(new Date())
   const key = days.join()

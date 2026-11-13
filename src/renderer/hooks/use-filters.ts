@@ -10,6 +10,7 @@ export type ViewType =
   | 'logbook'
   | 'project'
   | 'tag'
+  | 'calendar'
 
 interface UseFiltersOptions {
   view: ViewType
@@ -96,6 +97,15 @@ export function filtersFor({
         sort_by: 'updated',
         order_by: 'desc',
         keep_nested_subtasks: true,
+      }
+
+    // The calendar places tasks by their own dates and filters by day on this side, so it asks for
+    // every task, done ones included: the show-completed setting decides what appears, not the
+    // query. One query serves every range, so turning a month costs no request.
+    case 'calendar':
+      return {
+        sort_by: 'due_date',
+        order_by: 'asc',
       }
 
     default:

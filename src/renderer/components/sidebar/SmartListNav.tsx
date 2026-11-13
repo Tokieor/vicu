@@ -8,7 +8,7 @@ import { useReviewBadgeCount, useReviewFeatureEnabled } from '@/hooks/use-review
 import { useAppConfig } from '@/hooks/use-app-config'
 import { useOpenTaskCounts } from '@/hooks/use-project-progress'
 import { useTodayOverdueCount } from '@/hooks/use-today-overdue-count'
-import { isHiddenFromSidebar, isPlannerEnabled, isRoutinesEnabled } from '@/lib/vikunja-types'
+import { isCalendarEnabled, isHiddenFromSidebar, isPlannerEnabled, isRoutinesEnabled } from '@/lib/vikunja-types'
 import { t } from '@/lib/i18n'
 
 export interface SmartListItem {
@@ -22,6 +22,7 @@ const ALL_SMART_LISTS: SmartListItem[] = [
   { id: 'inbox', label: 'Inbox', path: '/inbox' },
   { id: 'today', label: 'Today', path: '/today' },
   { id: 'plan', label: 'Plan', path: '/plan' },
+  { id: 'calendar', label: 'Calendar', path: '/calendar' },
   { id: 'routines', label: 'Routines', path: '/routines' },
   { id: 'upcoming', label: 'Upcoming', path: '/upcoming' },
   { id: 'anytime', label: 'Anytime', path: '/anytime' },
@@ -38,11 +39,16 @@ export function useSmartLists(): SmartListItem[] {
   const { data: config } = useAppConfig()
   const routinesEnabled = isRoutinesEnabled(config)
   const plannerEnabled = isPlannerEnabled(config)
+  const calendarEnabled = isCalendarEnabled(config)
 
   // 标签在渲染期翻译：ALL_SMART_LISTS 是模块级常量，若在那里包 t() 只会在加载时求值一次，
   // 切换语言后不会更新。
-  return ALL_SMART_LISTS.filter((i) =>
-    (i.id !== 'review' || reviewEnabled) && (i.id !== 'routines' || routinesEnabled) && (i.id !== 'plan' || plannerEnabled)
+  return ALL_SMART_LISTS.filter(
+    (i) =>
+      (i.id !== 'review' || reviewEnabled) &&
+      (i.id !== 'routines' || routinesEnabled) &&
+      (i.id !== 'plan' || plannerEnabled) &&
+      (i.id !== 'calendar' || calendarEnabled)
   ).map((list) => ({ ...list, label: t(list.label) }))
 }
 

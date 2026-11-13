@@ -268,6 +268,12 @@ export function normalizeConfig(raw: Record<string, unknown>): AppConfig {
     planner_source: typeof raw.planner_source === 'string' ? raw.planner_source : undefined,
     planner_show_routines: raw.planner_show_routines !== false,
     planner_nudge: typeof raw.planner_nudge === 'string' && /^\d{2}:\d{2}$/.test(raw.planner_nudge) ? raw.planner_nudge : null,
+    // Calendar views (docs/calendar-views-plan.md): off until the user turns them on, per device.
+    calendar_enabled: raw.calendar_enabled === true,
+    calendar_view: raw.calendar_view === 'week' || raw.calendar_view === 'agenda' ? raw.calendar_view : 'month',
+    calendar_show_completed: raw.calendar_show_completed === true,
+    calendar_agenda_days: raw.calendar_agenda_days === 14 || raw.calendar_agenda_days === 30 ? raw.calendar_agenda_days : 7,
+    calendar_show_routines: raw.calendar_show_routines !== false,
   }
 }
 

@@ -33,4 +33,13 @@ describe('what each list asks the server for (D-PERF-2)', () => {
     expect(filtersFor({ view: 'inbox', inboxProjectId: 3 }).filter).toBe('done = false && project_id = 3')
     expect(filtersFor({ view: 'project', projectId: 9 }).filter).toBe('done = false && project_id = 9')
   })
+
+  it('the calendar asks for every task once, so turning a month costs no request', () => {
+    const calendar = filtersFor({ view: 'calendar' })
+    // No filter: done tasks come too, and the show-completed setting decides what appears.
+    expect(calendar.filter).toBeUndefined()
+    expect(calendar).toMatchObject({ sort_by: 'due_date', order_by: 'asc' })
+    // One query for every range: a month, a week and an agenda share it.
+    expect(JSON.stringify(filtersFor({ view: 'calendar' }))).toBe(JSON.stringify(calendar))
+  })
 })

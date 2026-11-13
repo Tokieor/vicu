@@ -399,6 +399,19 @@ export interface AppConfig {
   planner_show_routines?: boolean
   /** A notification in the evening to plan tomorrow; off unless true. Local time, `HH:MM`. */
   planner_nudge?: string | null
+  /**
+   * The calendar views (month, week, agenda) in the sidebar: per device, off by default.
+   * See `docs/calendar-views-plan.md`; it is the browsing half of the planner.
+   */
+  calendar_enabled?: boolean
+  /** The calendar's last view; missing or unknown means month. */
+  calendar_view?: CalendarViewKind
+  /** Month view shows completed tasks too; off unless true. */
+  calendar_show_completed?: boolean
+  /** How many days the agenda covers from the anchor; missing means 7. */
+  calendar_agenda_days?: CalendarAgendaDays
+  /** Routines on the week and agenda views; on unless false (and off with routines themselves). */
+  calendar_show_routines?: boolean
 }
 
 // --- Defaults every reader shares -------------------------------------------------------------
@@ -422,7 +435,7 @@ export function isRoutinesEnabled(config: Pick<AppConfig, 'routines_enabled'> | 
 }
 
 /** The smart lists Settings can take out of the sidebar, in the sidebar's order; the Inbox always stays. */
-export const SIDEBAR_HIDEABLE_LISTS = ['today', 'plan', 'routines', 'upcoming', 'anytime', 'review', 'logbook'] as const
+export const SIDEBAR_HIDEABLE_LISTS = ['today', 'plan', 'calendar', 'routines', 'upcoming', 'anytime', 'review', 'logbook'] as const
 export type SidebarHideableList = (typeof SIDEBAR_HIDEABLE_LISTS)[number]
 
 /** Whether the person took `list` out of the sidebar (Settings → General → Sidebar). */
@@ -431,6 +444,44 @@ export type PlannerView = 'day' | '3days' | 'week'
 /** Standalone tasks have no start and end date, so the planner needs a server. */
 export function isPlannerEnabled(config: Pick<AppConfig, 'planner_enabled' | 'standalone_mode'> | null | undefined): boolean {
   return config?.planner_enabled === true && config.standalone_mode !== true
+}
+
+/** The three calendar projections (`docs/calendar-views-plan.md` section 3). */
+export type CalendarViewKind = 'month' | 'week' | 'agenda'
+
+/** The agenda's span in days, from today forward. */
+export const CALENDAR_AGENDA_DAYS = [7, 14, 30] as const
+export type CalendarAgendaDays = (typeof CALENDAR_AGENDA_DAYS)[number]
+
+/**
+ * The calendar is off until the user turns it on, and needs a server for the same reason the
+ * planner does: without one there are no start and end dates to place tasks by.
+ */
+export function isCalendarEnabled(
+  config: Pick<AppConfig, 'calendar_enabled' | 'standalone_mode'> | null | undefined,
+): boolean {
+  return config?.calendar_enabled === true && config.standalone_mode !== true
+}
+
+/** The calendar's last view; a missing or unknown value falls back to the month. */
+export function readCalendarView(config: Pick<AppConfig, 'calendar_view'> | null | undefined): CalendarViewKind {
+  const view = config?.calendar_view
+  return view === 'week' || view === 'agenda' ? view : 'month'
+}
+
+/** The agenda span; a missing or unknown value falls back to 7 days. */
+export function readCalendarAgendaDays(
+  config: Pick<AppConfig, 'calendar_agenda_days'> | null | undefined,
+): CalendarAgendaDays {
+  const days = config?.calendar_agenda_days
+  return days === 14 || days === 30 ? days : 7
+}
+
+/** Routines show on the calendar unless turned off here or by routines themselves. */
+export function calendarShowsRoutines(
+  config: Pick<AppConfig, 'calendar_show_routines' | 'routines_enabled'> | null | undefined,
+): boolean {
+  return isRoutinesEnabled(config) && config?.calendar_show_routines !== false
 }
 
 export function isHiddenFromSidebar(config: Pick<AppConfig, 'sidebar_hidden_lists'> | null | undefined, list: string): boolean {

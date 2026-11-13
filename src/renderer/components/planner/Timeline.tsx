@@ -74,6 +74,17 @@ interface TimelineProps {
   note?: string
   /** Day view: resting a drag on Back or Forward turns the page. */
   pageTurn?: PageTurn
+  /**
+   * Days drawn one shade quieter (the calendar quiets its weekends). The Plan screen passes none,
+   * so its week looks exactly as it did.
+   */
+  dimDays?: ReadonlySet<LocalDate>
+  /**
+   * The tasks in the row above the grid, per day. The Plan screen leaves it out and keeps its own
+   * rule (a date-only due date); the calendar also takes a due or start that carries a clock but
+   * has no end, which would otherwise be drawn nowhere (docs/calendar-views-plan.md 3.2).
+   */
+  topRowOf?: (day: LocalDate) => Task[]
 }
 
 const GUTTER_CLASS = 'w-14 shrink-0'
@@ -93,7 +104,18 @@ function hourLabel(hour: number, fmt: ReturnType<typeof useDateFormat>): string 
   return formatDateDisplay('logbook.time', new Date(2000, 0, 15, hour), new Date(2000, 0, 15), false, fmt)
 }
 
-function TopRowChip({ task, draggable, wide = false }: { task: Task; draggable: boolean; wide?: boolean }) {
+function TopRowChip({
+  task,
+  draggable,
+  wide = false,
+  color = null,
+}: {
+  task: Task
+  draggable: boolean
+  wide?: boolean
+  /** The project's colour, drawn like a block's: a bar on the left over a faint wash. */
+  color?: string | null
+}) {
   const { setNodeRef, listeners, isDragging } = useDraggable({
     id: `plan-chip-${task.id}`,
     data: { type: 'task', task },
@@ -105,14 +127,18 @@ function TopRowChip({ task, draggable, wide = false }: { task: Task; draggable: 
       {...listeners}
       data-plan-chip={task.id}
       title={task.title}
+      style={{ borderLeftColor: color ?? 'var(--border-color)' }}
       className={cn(
-        'truncate rounded-chip border border-border bg-bg-card px-1.5 py-0.5 text-caption text-text',
+        'relative truncate overflow-hidden rounded-chip border border-l-[3px] border-border bg-bg-card px-1.5 py-0.5 text-caption text-text',
         wide && 'max-w-[16rem]',
         draggable && 'cursor-grab',
         isDragging && 'opacity-50',
       )}
     >
-      {task.title}
+      {color && (
+        <span aria-hidden="true" className="pointer-events-none absolute inset-0" style={{ backgroundColor: `${color}1f` }} />
+      )}
+      <span className="relative">{task.title}</span>
     </div>
   )
 }
@@ -126,6 +152,7 @@ function DayTopRow({
   highlighted = false,
   wide = false,
   emptyText,
+  colors,
 }: {
   day: LocalDate
   tasks: readonly Task[]
@@ -138,6 +165,8 @@ function DayTopRow({
   wide?: boolean
   /** Shown while it has no tasks (the Day view's drop target during a drag). */
   emptyText?: string
+  /** Project colours, so a chip says which project its task belongs to. */
+  colors: ReadonlyMap<number, string | null>
 }) {
   const data: PlanDropData = { type: PLAN_DROP, drop: onDropTasks }
   const { setNodeRef, isOver } = useDroppable({ id: `plan-day-${day}`, data, disabled: !canDrop })
@@ -155,7 +184,13 @@ function DayTopRow({
         <span className="flex min-w-0 flex-1 items-center justify-center truncate text-caption text-text-secondary">{emptyText}</span>
       )}
       {tasks.map((task) => (
-        <TopRowChip key={task.id} task={task} draggable={canChange(task)} wide={wide} />
+        <TopRowChip
+          key={task.id}
+          task={task}
+          draggable={canChange(task)}
+          wide={wide}
+          color={colors.get(task.project_id) ?? null}
+        />
       ))}
     </div>
   )
@@ -261,6 +296,8 @@ export function Timeline({
   reasonOf,
   note,
   pageTurn,
+  dimDays,
+  topRowOf,
 }: TimelineProps) {
   const fmt = useDateFormat()
   const now = useMinuteClock()
@@ -398,7 +435,9 @@ export function Timeline({
   // The Day view's row of tasks without a time: shown when the day has some, and as a drop target
   // while something is dragged.
   const singleDay = days[0]
-  const singleDayTop = multiDay ? [] : dayTopRow(tasks, singleDay)
+  // Which tasks sit in the row above the grid. Plan keeps its own rule; the calendar passes its own.
+  const topRowOn = (day: LocalDate): Task[] => (topRowOf ? topRowOf(day) : dayTopRow(tasks, day))
+  const singleDayTop = multiDay ? [] : topRowOn(singleDay)
   const dropRowOnly = !multiDay && singleDayTop.length === 0 && dragging && canPlaceOn(singleDay, today)
   const dayTopRowView = (
     <DayTopRow
@@ -409,6 +448,7 @@ export function Timeline({
       highlighted={topOver === singleDay}
       wide
       emptyText="Drop here to remove the time"
+      colors={projectColor}
       onDropTasks={(dropped) => {
         for (const task of dropped) onChange(task, planForDay(task, singleDay))
       }}
@@ -452,10 +492,11 @@ export function Timeline({
               <DayTopRow
                 key={day}
                 day={day}
-                tasks={dayTopRow(tasks, day)}
+                tasks={topRowOn(day)}
                 canDrop={canPlaceOn(day, today)}
                 canChange={canChange}
                 highlighted={topOver === day}
+                colors={projectColor}
                 onDropTasks={(dropped) => {
                   for (const task of dropped) onChange(task, planForDay(task, day))
                 }}
@@ -525,6 +566,7 @@ export function Timeline({
               const markers = dayMarkers(tasks, day)
               const placeable = canPlaceOn(day, today)
               const isToday = day === today
+              const dim = dimDays?.has(day) ?? false
               const workFrom = clockMinutes(hours[0])
               const workTo = clockMinutes(hours[1])
               return (
@@ -541,9 +583,17 @@ export function Timeline({
                     !placeable && 'bg-bg-hover/40',
                   )}
                 >
-                  {/* Outside the work hours is shaded. */}
-                  <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 bg-bg-hover/40" style={{ height: workFrom * PX_PER_MINUTE }} />
-                  <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 bg-bg-hover/40" style={{ top: workTo * PX_PER_MINUTE }} />
+                  {/* A day the calendar quiets (a weekend) is shaded as one flat block: it has no
+                      working hours to show, and a single tint reads clearer than the two bands. */}
+                  {dim ? (
+                    <div aria-hidden="true" className="pointer-events-none absolute inset-0 bg-bg-hover/50" />
+                  ) : (
+                    <>
+                      {/* Outside the work hours is shaded. */}
+                      <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 bg-bg-hover/40" style={{ height: workFrom * PX_PER_MINUTE }} />
+                      <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 bg-bg-hover/40" style={{ top: workTo * PX_PER_MINUTE }} />
+                    </>
+                  )}
                   {HOURS.map((hour) => (
                     <div key={hour} aria-hidden="true" className="pointer-events-none absolute inset-x-0" style={{ top: hour * HOUR_HEIGHT_PX, height: HOUR_HEIGHT_PX }}>
                       {hour > 0 && <div className="absolute inset-x-0 top-0 border-t border-border" />}
