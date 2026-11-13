@@ -27,10 +27,21 @@ import { parseZhClock } from './task-parser/zh-dates'
 // selection (through the quick-add parser's own date extraction, so the panel and the composer
 // read "tomorrow 9am" the same way). No React and no DOM.
 
+/** 时间段：开始那天。结束那天就是 `date`——面板把结束日期和截止日期当成同一个值。 */
+export interface WhenSpan {
+  /** 还没选开始那天时为 null。 */
+  start: LocalDate | null
+}
+
 /** A picked day and, optionally, a time of day ("HH:mm", 24-hour). No time means date-only. */
 export interface WhenValue {
   date: LocalDate | null
   time: string | null
+  /**
+   * 时间段（开始–结束）。没有这一项或为 null：不设时间段；`{ start: null }`：时间段开着，
+   * 但还没选开始那天。
+   */
+  span?: WhenSpan | null
 }
 
 export const EMPTY_WHEN: WhenValue = { date: null, time: null }
@@ -105,6 +116,17 @@ export function whenValueOfDue(due: string | null | undefined): WhenValue {
   return { date, time: `${pad2(at.getHours())}:${pad2(at.getMinutes())}` }
 }
 
+/**
+ * The panel's value for a stored task: the due date, plus the start date when the task has a span.
+ * A start that is part of a time block is left out — that is a block, not a span of days, and the
+ * panel does not offer a span over it.
+ */
+export function whenValueOf(due: string | null | undefined, start?: string | null): WhenValue {
+  const value = whenValueOfDue(due)
+  if (!start || isNoDueDate(start)) return value
+  return { ...value, span: { start: toLocalDate(new Date(start)) } }
+}
+
 /** The local instant of a day and a time of day. */
 export function instantOf(date: LocalDate, time: string): Date {
   const start = startOfLocalDay(date)
@@ -124,17 +146,36 @@ export function dueOfWhenValue(value: WhenValue): string | null {
 
 /** The same value with a day (and the time kept). */
 export function withDate(value: WhenValue, date: LocalDate): WhenValue {
-  return { date, time: value.time }
+  return { ...value, date }
 }
 
 /** The same value with a time; a time without a day picked starts from `today`. */
 export function withTime(value: WhenValue, time: string | null, today: LocalDate): WhenValue {
-  if (time === null) return { date: value.date, time: null }
-  return { date: value.date ?? today, time }
+  if (time === null) return { ...value, time: null }
+  return { ...value, date: value.date ?? today, time }
+}
+
+/**
+ * 时间段写成任务字段：开始与结束两天（结束用截止日期那个值，可能带时刻）。
+ * 没有时间段时返回 null——调用方据此「不动」start_date / end_date。
+ */
+export function spanOfWhenValue(value: WhenValue): { start_date: string | null; end_date: string | null } | null {
+  if (!value.span) return null
+  return {
+    start_date: value.span.start ? dateOnlyDue(value.span.start) : null,
+    end_date: dueOfWhenValue(value),
+  }
+}
+
+/** 时间段的底色范围：开始到结束（结束就是 `date`）；两端缺一个就没有范围。 */
+export function spanDays(value: WhenValue): { from: LocalDate; to: LocalDate } | null {
+  const start = value.span?.start
+  if (!start || !value.date) return null
+  return start <= value.date ? { from: start, to: value.date } : { from: value.date, to: start }
 }
 
 export function sameValue(a: WhenValue, b: WhenValue): boolean {
-  return a.date === b.date && a.time === b.time
+  return a.date === b.date && a.time === b.time && (a.span?.start ?? null) === (b.span?.start ?? null)
 }
 
 // --- Month grid -------------------------------------------------------------------------------
@@ -246,6 +287,8 @@ export interface WhenParse {
   value: WhenValue
   /** The part of the text that was read as a date or time. */
   matched: string
+  /** 文本写出的时间段（"11月10日到11月15日"）：两端都是本地日期，`value.date` 是结束那天。 */
+  span?: { start: LocalDate; end: LocalDate } | null
 }
 
 /**
@@ -271,7 +314,13 @@ export function parseWhenText(
   const date = toLocalDate(found.dueDate)
   const time = found.hasTime ? `${pad2(found.dueDate.getHours())}:${pad2(found.dueDate.getMinutes())}` : null
   const token = found.tokens[0]
-  return { value: { date, time }, matched: token ? token.raw : text.trim() }
+  // 时间段（"11月10日到11月15日"）：截止日期是结束那天，开始那天另外记在 value.span 上。
+  const span = found.span ? { start: toLocalDate(found.span.start), end: toLocalDate(found.span.end) } : null
+  return {
+    value: span ? { date: span.end, time: null, span: { start: span.start } } : { date, time },
+    matched: token ? token.raw : text.trim(),
+    span,
+  }
 }
 
 /**

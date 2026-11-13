@@ -282,6 +282,52 @@ describe('接进任务解析与文本选择', () => {
   })
 })
 
+describe('时间段', () => {
+  const span = (text: string) => {
+    const range = parseZhDate(text, NOW)?.range
+    return range ? { from: day(range.from), to: day(range.to) } : null
+  }
+
+  it('两个日期中间一个「到」或「至」就是时间段，截止日期取结束那天', () => {
+    expect(span('11月10日到11月15日')).toEqual({ from: '2026-11-10', to: '2026-11-15' })
+    expect(span('11月10日至11月15日')).toEqual({ from: '2026-11-10', to: '2026-11-15' })
+    // 开头已经过去也算：时间段本来就可以已经开始了。
+    expect(day(parseZhDate('11月10日到11月15日', NOW)?.date ?? null)).toBe('2026-11-15')
+    expect(parseZhDate('11月10日到11月15日', NOW)?.hasTime).toBe(false)
+    expect(parseZhDate('11月10日到11月15日', NOW)?.notes).toContain('date-range')
+  })
+
+  it('缺月份的那一头按上下文补齐', () => {
+    expect(span('11月25日到5日')).toEqual({ from: '2026-11-25', to: '2026-12-05' })
+    expect(span('10号到15号')).toEqual({ from: '2026-11-10', to: '2026-11-15' })
+    expect(span('明天到周五')).toEqual({ from: '2026-11-12', to: '2026-11-13' })
+    expect(span('下周一至下周三')).toEqual({ from: '2026-11-16', to: '2026-11-18' })
+  })
+
+  it('短横线与波浪号也算连词', () => {
+    expect(span('11月10日-11月15日')).toEqual({ from: '2026-11-10', to: '2026-11-15' })
+    expect(span('周一~周五')).toEqual({ from: '2026-11-16', to: '2026-11-20' })
+  })
+
+  it('不是时间段的写法照旧', () => {
+    expect(span('11月15日')).toBeNull()
+    expect(span('明天下午3点到5点')).toBeNull()
+    // 连词后面不是日期（"到家"）就不算。
+    expect(span('明天到家')).toBeNull()
+  })
+
+  it('任务文本里的时间段落到开始与结束日期，截止日期是结束那天', () => {
+    const parsed = parse('整理房间 11月10日到11月15日', ZH, NOW)
+    expect(parsed.title).toBe('整理房间')
+    expect(day(parsed.dueDate)).toBe('2026-11-15')
+    expect(parsed.span).not.toBeNull()
+    expect(day(parsed.span!.start)).toBe('2026-11-10')
+    expect(day(parsed.span!.end)).toBe('2026-11-15')
+    // 英文模式（默认 Todoist）不读中文，更不会读成时间段。
+    expect(parse('整理房间 11月10日到11月15日', DEFAULT_PARSER_CONFIG, NOW).span).toBeNull()
+  })
+})
+
 describe('When 面板的文本输入', () => {
   it('parseWhenText 读中文日期与时刻', () => {
     const hit = parseWhenText('明天下午3点', NOW, undefined, null, true)

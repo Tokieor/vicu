@@ -48,6 +48,16 @@ export function useTaskActions(tasks: Task[], options: { returnFocusTo?: HTMLEle
 
   const setDueDateIso = useCallback((iso: string) => patch({ due_date: iso }), [patch])
 
+  /**
+   * 时间段：开始与结束两天一起写，两端为 null 时清掉。批量选中时每个任务写同一段，
+   * 与「批量改截止日期」一致。
+   */
+  const setSpanIso = useCallback(
+    (span: { start_date: string | null; end_date: string | null }) =>
+      patch({ start_date: span.start_date ?? NULL_DATE, end_date: span.end_date ?? NULL_DATE }),
+    [patch]
+  )
+
   const postponeTomorrow = useCallback(
     () => patch({ due_date: dueTomorrow() }),
     [patch]
@@ -178,6 +188,7 @@ export function useTaskActions(tasks: Task[], options: { returnFocusTo?: HTMLEle
     setDueToday,
     setUrgentPriority,
     setDueDateIso,
+    setSpanIso,
     postponeTomorrow,
     postponeNextMonday,
     clearDate,

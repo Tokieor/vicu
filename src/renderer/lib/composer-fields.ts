@@ -2,8 +2,8 @@ import { NULL_DATE } from './constants'
 import { isDateOnly, isNoDueDate, parsedDue } from './due-dates'
 import { formatDateChip } from './date-utils'
 import { detectRecurrencePreset, formatRecurrenceLabel } from './recurrence'
-import { blockFields, recurrenceToVikunja, type ParseResult } from './task-parser'
-import { formatBlockRange, type DateFormat } from './date-display'
+import { blockFields, recurrenceToVikunja, spanFields, type ParseResult } from './task-parser'
+import { formatBlockRange, formatDaySpan, type DateFormat } from './date-display'
 import { placeChipName, priorityChipName, recurrenceChipName, type ChipData, type ChipSource } from './parse-chips'
 
 // One source of truth for the new-task composer (card 3.5). A field shows, and saves, what the
@@ -17,6 +17,11 @@ export interface ComposerInput {
   /** The date picked by hand: `touched` once the user used the picker (even to clear it). */
   dueTouched: boolean
   dueValue: string | null
+  /**
+   * The start and end dates picked by hand in the When panel (the panel keeps end = due date).
+   * Used once `dueTouched` is set, so a picked span wins over the text like every other control.
+   */
+  spanValue?: { start_date: string | null; end_date: string | null } | null
   /** The date a list gives a new task (Today: today), or null. */
   contextDue: string | null
   contextDueDismissed: boolean
@@ -39,6 +44,11 @@ export interface ComposerFields {
   dueSource: FieldSource | null
   /** The time block the text makes (`for 30m` with a time), as task fields, or null. */
   block: { start_date: string; end_date: string } | null
+  /**
+   * The days a span covers (`11月10日到11月15日`, or picked in the panel), as Vikunja's start and
+   * end dates, or null. The due date is the last day.
+   */
+  span: { start_date: string; end_date: string } | null
   /** 0 for none. */
   priority: number
   prioritySource: FieldSource | null
@@ -70,6 +80,13 @@ export function resolveComposerFields(input: ComposerInput): ComposerFields {
   }
   // A block belongs to the date the text read; a date picked by hand replaces both.
   const block = input.dueTouched ? null : blockFields(parsed)
+  // The same for a span of days: the picker's own, or the text's when nothing was picked.
+  const picked = input.spanValue ?? null
+  const span = input.dueTouched
+    ? picked && picked.start_date && picked.end_date
+      ? { start_date: picked.start_date, end_date: picked.end_date }
+      : null
+    : spanFields(parsed)
 
   let priority = 0
   let prioritySource: FieldSource | null = null
@@ -105,7 +122,7 @@ export function resolveComposerFields(input: ComposerInput): ComposerFields {
     repeatSource = 'text'
   }
 
-  return { dueDate, dueSource, block, priority, prioritySource, projectId, projectSource, projectNotFound, repeat, repeatSource }
+  return { dueDate, dueSource, block, span, priority, prioritySource, projectId, projectSource, projectNotFound, repeat, repeatSource }
 }
 
 /** True while the caret is still in the project word ("+Pe" at the end of the text): the name may be unfinished. */
@@ -141,7 +158,10 @@ export function composerChips({ fields, parsed, chipLabels, projectTitle, fmt, n
       type: 'date',
       key: 'date',
       source: source(fields.dueSource),
-      label: formatDateChip(new Date(fields.dueDate), isDateOnly(fields.dueDate), now, fmt),
+      // A span of days says both ends ("Nov 10 – Nov 15"); one day says its date.
+      label: fields.span
+        ? formatDaySpan(new Date(fields.span.start_date), new Date(fields.span.end_date), now, fmt)
+        : formatDateChip(new Date(fields.dueDate), isDateOnly(fields.dueDate), now, fmt),
     })
   }
   if (fields.block && parsed?.block) {

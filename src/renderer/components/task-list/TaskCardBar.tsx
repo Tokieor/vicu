@@ -62,6 +62,8 @@ interface TaskCardBarProps {
   /** Other buttons that toggle the attachment popover (the paperclip in the card header). */
   attachmentInvokers: RefObject<HTMLElement | null>[]
   onDateChange: (isoDate: string) => void
+  /** The start and end days of the task's span, both null when it is turned off. */
+  onSpanChange: (span: { start_date: string | null; end_date: string | null }) => void
   onRecurrenceChange: (repeatAfter: number, repeatMode: number) => void
   onPriorityChange: (priority: number) => void
   onReminderChange: (reminders: TaskReminder[]) => void
@@ -157,6 +159,7 @@ export function TaskCardBar({
   onClose,
   attachmentInvokers,
   onDateChange,
+  onSpanChange,
   onRecurrenceChange,
   onPriorityChange,
   onReminderChange,
@@ -228,7 +231,10 @@ export function TaskCardBar({
         <WhenPopover
           anchorRef={dateRef}
           currentDate={task.due_date}
+          startDate={task.start_date}
+          endDate={task.end_date}
           onDateChange={onDateChange}
+          onSpanChange={onSpanChange}
           onClose={onClose}
           repeatAfter={task.repeat_after ?? 0}
           repeatMode={task.repeat_mode ?? 0}

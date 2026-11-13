@@ -13,6 +13,8 @@
 //   - 「晚上十二点」按次日 00:00 处理（notes: midnight-next-day）；
 //     「午夜十二点」「凌晨十二点」按当天 00:00 处理。
 //   - 紧跟「每」的周几（"每周一"）是重复规则，不当日期，留给文本。
+//   - 两个日期短语中间只隔一个连词（"11月10日到11月15日"、"10号至15号"、"周一~周五"）时
+//     按时间段读：`range` 给出两端，`date` 是结束那天（截止日期就是它）。
 //   - 无法识别、或整条只有时段（"下午"）时返回 null；调用方保持原文不变。
 //
 // 纯函数，不碰 DOM、不读设置，所以三种 tsconfig 都能编译，也便于单测。
@@ -28,6 +30,7 @@ export type ZhNote =
   | 'midnight-next-day'
   | 'time-passed-tomorrow'
   | 'date-only'
+  | 'date-range'
 
 export interface ZhDateMatch {
   /** 命中区间起点（含）。 */
@@ -41,6 +44,11 @@ export interface ZhDateMatch {
   /** 文本里给了日期（"明天"、"周三"、"10月20日"）。 */
   hasDate: boolean
   notes: ZhNote[]
+  /**
+   * 文本写的是一个时间段（"11月10日到11月15日"）：两端各是哪一天。
+   * 这时 `date` 是结束那天——截止日期就是它，时间段只是多出开始那天。
+   */
+  range?: { from: Date; to: Date }
 }
 
 const HAN_RE = /[\u4e00-\u9fa5]/
@@ -167,6 +175,10 @@ interface DateCandidate {
   date: LocalDate
   period?: ZhPeriod
   past?: boolean
+  /** 只写了日（"15日"），没写月份：当作时间段的结尾时，落在开头之前就是下个月。 */
+  dayOnly?: boolean
+  /** 周几（"周五"）：当作时间段的结尾而落在开头之前时，是下一周的同一个周几。 */
+  weekday?: boolean
 }
 
 const RELATIVE_DAY: Array<[RegExp, number]> = [
@@ -208,14 +220,17 @@ const N_MONTHS_LATER = new RegExp(`(${NUM_SRC})\\s*个?\\s*月(?:之?后|以后)
 const NEXT_MONTH = new RegExp(`下个?月(?:的)?(?:\\s*(${NUM_SRC})\\s*[号日])?`, 'g')
 
 /**
- * 找文本里最靠前、最长的日期短语。多个短语重叠时（"大后天" 里的 "后天"）取更长的那个。
- * 紧跟「每」的短语（"每周一"）跳过：那是重复规则，不是某一天。
+ * 找文本里所有日期短语（含过去的），按出现位置排列。
+ * 多个短语重叠时（"大后天" 里的 "后天"）都留着，由调用方挑。
  */
-function matchDatePhrase(text: string, today: LocalDate): DateCandidate | null {
+function collectDateCandidates(text: string, today: LocalDate): DateCandidate[] {
   const found: DateCandidate[] = []
   const todayYear = Number(today.slice(0, 4))
 
-  const add = (re: RegExp, resolve: (m: RegExpExecArray) => { date: LocalDate | null; period?: ZhPeriod; past?: boolean }) => {
+  const add = (
+    re: RegExp,
+    resolve: (m: RegExpExecArray) => { date: LocalDate | null; period?: ZhPeriod; past?: boolean; dayOnly?: boolean; weekday?: boolean },
+  ) => {
     for (const m of text.matchAll(re)) {
       const index = m.index ?? 0
       if (index > 0 && text[index - 1] === '每') continue
@@ -242,11 +257,11 @@ function matchDatePhrase(text: string, today: LocalDate): DateCandidate | null {
     const prefix = m[1] ?? ''
     const target = WEEKDAY_INDEX[m[2]]
     if (!target) return { date: null }
-    if (prefix.startsWith('下下')) return { date: weekdayOfWeek(today, target, 2) }
-    if (prefix) return { date: weekdayOfWeek(today, target, prefix.startsWith('下') ? 1 : 0) }
+    if (prefix.startsWith('下下')) return { date: weekdayOfWeek(today, target, 2), weekday: true }
+    if (prefix) return { date: weekdayOfWeek(today, target, prefix.startsWith('下') ? 1 : 0), weekday: true }
     // 没有前缀：「周三」是本周三，已经过了就是下周三。
     const thisWeek = weekdayOfWeek(today, target, 0)
-    return { date: thisWeek < today ? addLocalDays(thisWeek, 7) : thisWeek }
+    return { date: thisWeek < today ? addLocalDays(thisWeek, 7) : thisWeek, weekday: true }
   })
 
   add(NEXT_WEEK_ONLY, () => ({ date: addLocalDays(startOfWeek(today), 7) }))
@@ -274,7 +289,7 @@ function matchDatePhrase(text: string, today: LocalDate): DateCandidate | null {
     const month = today.slice(0, 7)
     const date = buildLocalDate(todayYear, Number(month.slice(5, 7)), day)
     if (!date) return { date: null }
-    return { date: date < today ? addMonthsLocal(date, 1) : date }
+    return { date: date < today ? addMonthsLocal(date, 1) : date, dayOnly: true }
   })
 
   add(N_DAYS_LATER, (m) => {
@@ -302,19 +317,82 @@ function matchDatePhrase(text: string, today: LocalDate): DateCandidate | null {
     return { date: buildLocalDate(year, month, day) }
   })
 
-  // 过去表达（"昨天"、"上周三"）不产生日期，但它盖住的字也不能当日期：
-  // "上周三" 里的 "周三" 是同一段话的一部分，不能读成本周三。
-  const pastRanges = found.filter((candidate) => candidate.past)
-  const shadowedByPast = (candidate: DateCandidate) =>
-    pastRanges.some((past) => candidate.start < past.end && candidate.end > past.start)
+  return found
+}
 
-  const usable = found.filter((candidate) => !candidate.past && !shadowedByPast(candidate))
+/**
+ * 能当日期用的候选：去掉过去表达、被过去表达盖住的，以及被另一个短语整个包住的
+ * （"11月10日" 里的 "10日"）——它们说的是同一天，留着只会让时间段从半截开始。
+ */
+function usableCandidates(found: DateCandidate[]): DateCandidate[] {
+  const pastRanges = found.filter((candidate) => candidate.past)
+  const live = found.filter(
+    (candidate) => !candidate.past && !pastRanges.some((past) => candidate.start < past.end && candidate.end > past.start),
+  )
+  const width = (candidate: DateCandidate) => candidate.end - candidate.start
+  return live.filter(
+    (candidate) =>
+      !live.some(
+        (other) => other !== candidate && other.start <= candidate.start && other.end >= candidate.end && width(other) > width(candidate),
+      ),
+  )
+}
+
+/**
+ * 找文本里最靠前、最长的日期短语。多个短语重叠时（"大后天" 里的 "后天"）取更长的那个。
+ * 紧跟「每」的短语（"每周一"）跳过：那是重复规则，不是某一天。
+ */
+function matchDatePhrase(found: DateCandidate[]): DateCandidate | null {
+  const usable = usableCandidates(found)
   if (usable.length) {
     usable.sort((a, b) => a.start - b.start || b.end - b.start - (a.end - a.start))
     return usable[0]
   }
   // 整段只有过去表达：交给调用方当作没有日期。
   return found.find((candidate) => candidate.past) ?? null
+}
+
+/** 时间段两个端点之间的连词（"11月10日到11月15日"、"10号至15号"、"周一~周五"）。 */
+const RANGE_CONNECTOR = /^\s*(?:到|至|~|～|-|–|—)\s*$/
+
+interface DateRangeCandidate {
+  start: number
+  end: number
+  from: LocalDate
+  to: LocalDate
+}
+
+/**
+ * 找出文本里的时间段：两个日期短语中间只隔一个连词（"到"、"至"、"~"、短横线）。
+ * 找不到成对的短语就返回 null——单个日期不算时间段。
+ *
+ * 开头比结尾还晚时先修一头：结尾是周几（"周一~周五"）就算同一周的下一个周几；
+ * 否则把开头按「已经过去、算下次」推回去的那一下撤回——时间段的开头本来就可以在过去
+ * （"11月10日到11月15日" 在 11 月 11 日说，是本周的事）。只写了日的（"10号到15号"）退一个月，
+ * 写了月的退一年。
+ */
+function matchDateRange(text: string, found: DateCandidate[]): DateRangeCandidate | null {
+  const usable = usableCandidates(found).sort((a, b) => a.start - b.start)
+  for (let i = 0; i + 1 < usable.length; i++) {
+    const from = usable[i]
+    const to = usable[i + 1]
+    if (to.start < from.end) continue
+    if (!RANGE_CONNECTOR.test(text.slice(from.end, to.start))) continue
+    let start = from.date
+    let end = to.date
+    // 结尾落在开头之前：先看它是不是周几（"周一~周五" 的周五是同一周的下一个周五）。
+    if (end < start && to.weekday) {
+      const ahead = addLocalDays(end, 7)
+      if (ahead >= start) end = ahead
+    }
+    if (end < start) {
+      const pulled = addMonthsLocal(start, from.dayOnly ? -1 : -12)
+      if (pulled <= end) start = pulled
+    }
+    if (end < start) continue
+    return { start: from.start, end: to.end, from: start, to: end }
+  }
+  return null
 }
 
 // --- 时刻短语 -------------------------------------------------------------------------------
@@ -407,8 +485,24 @@ export function parseZhDate(text: string, reference: Date = new Date()): ZhDateM
   if (!text || !HAN_RE.test(text)) return null
   const today = toLocalDate(reference)
 
-  const dateHit = matchDatePhrase(text, today)
+  const found = collectDateCandidates(text, today)
+  const dateHit = matchDatePhrase(found)
   if (dateHit?.past) return null
+
+  // 时间段（"11月10日到11月15日"）先看：它盖住两个日期短语，整段就是「开始–结束」，
+  // 截止日期取结束那天。时间段只按天读，后面的时刻留给调用方当普通文本。
+  const range = matchDateRange(text, found)
+  if (range) {
+    return {
+      start: range.start,
+      end: range.end,
+      date: atLocal(range.to, 12, 0),
+      hasTime: false,
+      hasDate: true,
+      notes: ['date-range'],
+      range: { from: atLocal(range.from, 12, 0), to: atLocal(range.to, 12, 0) },
+    }
+  }
 
   // 日期后面可能跟着星期词（"10月12日周一" 就是 When 面板自己的写法），
   // 时间在那之后再找，否则整段读不出时刻，只剩日期。

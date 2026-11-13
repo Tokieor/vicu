@@ -842,5 +842,10 @@
   "Show completed tasks": "显示已完成任务",
   "Show the calendar in the sidebar": "在侧边栏显示日历",
   "Show routines on the week and agenda": "在周视图与日程中显示例行事务",
-  "The month, the week and the agenda over the same tasks. Look and make light changes here; the Plan screen is where a day is laid out.": "月、周、日程三种视图展示同一批任务。这里用于浏览和轻量改动；给一天排时间是 Plan 屏幕的事。"
+  "The month, the week and the agenda over the same tasks. Look and make light changes here; the Plan screen is where a day is laid out.": "月、周、日程三种视图展示同一批任务。这里用于浏览和轻量改动；给一天排时间是 Plan 屏幕的事。",
+  "Start": "开始",
+  "End": "结束",
+  "Start and end dates": "时间段",
+  "Clear the start and end dates": "清除时间段",
+  "The end date is the due date. Pick a start day, then an end day.": "结束日期与到期日期是同一个。先在日历里点开始那天，再点结束那天。"
 }

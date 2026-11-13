@@ -117,6 +117,8 @@ export function TaskContextMenu({ fallbackTask, x, y, reorderable = false, onClo
   const allSameProject = tasks.every((t) => t.project_id === tasks[0].project_id)
   const currentProjectId = allSameProject ? tasks[0].project_id : undefined
   const datePickerCurrent = tasks.length === 1 ? tasks[0].due_date : NULL_DATE
+  // 只有一个任务时才知道它的开始日期；多选时按「没有时间段」开面板。
+  const single = tasks.length === 1 ? tasks[0] : null
   // Assign for a selection (semantics 9.2); one task is assigned in its card.
   const canAssign = multi && canAssignSelection(tasks, access)
   // Move up and Move down, for one row, only where it can go (like a drag; cross-app semantics 12.4).
@@ -168,7 +170,10 @@ export function TaskContextMenu({ fallbackTask, x, y, reorderable = false, onClo
           anchorRef={scheduleRef}
           placement="right-start"
           currentDate={datePickerCurrent}
+          startDate={single?.start_date ?? null}
+          endDate={single?.end_date ?? null}
           onDateChange={actions.setDueDateIso}
+          onSpanChange={actions.setSpanIso}
           onClose={closeSubAndMenu}
         />
       )}

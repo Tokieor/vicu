@@ -78,7 +78,7 @@ export function SelectionBar() {
           Schedule
         </button>
         {picker === 'date' && (
-          <WhenPopover anchorRef={dateRef} currentDate={NULL_DATE} allowClear onDateChange={actions.setDueDateIso} onClose={() => setPicker(null)} />
+          <WhenPopover anchorRef={dateRef} currentDate={NULL_DATE} allowClear onDateChange={actions.setDueDateIso} onSpanChange={actions.setSpanIso} onClose={() => setPicker(null)} />
         )}
 
         <button type="button" className={BUTTON} disabled={!anyNotDone} onClick={() => void actions.completeAll()}>

@@ -16,7 +16,7 @@ import { useConfirmDelete } from '@/hooks/use-confirm-delete'
 import { ConfirmDialog } from '@/components/shared/ConfirmDialog'
 import { dueToday, parsedDue } from '@/lib/due-dates'
 import { labelChipStyle } from '@/lib/label-style'
-import { normalizeHex } from '@/lib/constants'
+import { NULL_DATE, normalizeHex } from '@/lib/constants'
 import { checklistLabel, rowLabels, rowProjectSource } from '@/lib/row-anatomy'
 import { useIsDark } from '@/hooks/use-is-dark'
 import type { Task, TaskReminder } from '@/lib/vikunja-types'
@@ -499,6 +499,18 @@ function TaskRowInner({
     [task, updateTask]
   )
 
+  /** 时间段（开始/结束两天）；面板把结束日期当成截止日期，所以这里只写这两天。 */
+  const handleSpanChange = useCallback(
+    (span: { start_date: string | null; end_date: string | null }) => {
+      updateTask.mutate({
+        id: task.id,
+        changes: { start_date: span.start_date ?? NULL_DATE, end_date: span.end_date ?? NULL_DATE },
+        original: task,
+      })
+    },
+    [task, updateTask]
+  )
+
   const handleReminderChange = useCallback(
     (reminders: TaskReminder[]) => {
       updateTask.mutate({ id: task.id, changes: { reminders }, original: task })
@@ -948,6 +960,7 @@ function TaskRowInner({
         onClose={() => setActivePopover(null)}
         attachmentInvokers={attachmentInvokers}
         onDateChange={handleDateChange}
+        onSpanChange={handleSpanChange}
         onRecurrenceChange={handleRecurrenceChange}
         onPriorityChange={handlePriorityChange}
         onReminderChange={handleReminderChange}

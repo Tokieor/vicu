@@ -358,6 +358,17 @@ export function formatBlockRange(start: Date, end: Date, fmt: DateFormat): strin
 }
 
 /**
+ * The days a task covers, as one phrase ("Nov 10 – Nov 15", "11月10日 – 11月15日"). The year is
+ * left out unless one of the two ends is outside the current year; the phrase is the calendar's
+ * `spanLabel` and the composer's date chip.
+ */
+export function formatDaySpan(start: Date, end: Date, now: Date, fmt: DateFormat): string {
+  const p = phrasesFor(fmt.locale)
+  const withYear = start.getFullYear() !== now.getFullYear() || end.getFullYear() !== now.getFullYear()
+  return `${p.dayMonth(start, withYear)} – ${p.dayMonth(end, withYear)}`
+}
+
+/**
  * A time block on a row (`row.block`, section 8.3): the range alone today, otherwise the `row` day
  * phrase, a comma and the range ("Tomorrow, 15:00–15:30").
  */

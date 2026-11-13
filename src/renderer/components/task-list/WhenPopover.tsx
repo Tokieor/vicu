@@ -2,11 +2,18 @@ import { useRef, useState, type RefObject } from 'react'
 import { X, Repeat } from 'lucide-react'
 import { NULL_DATE } from '@/lib/constants'
 import { detectRecurrencePreset, formatRecurrenceLabel } from '@/lib/recurrence'
-import { dueOfWhenValue, whenValueOfDue, type WhenValue } from '@/lib/when-logic'
+import { isTimeBlock } from '../../../shared/time-blocks'
+import { dueOfWhenValue, spanOfWhenValue, whenValueOf, type WhenValue } from '@/lib/when-logic'
 import { Button } from '../shared/Button'
 import { Popover, type PopoverCloseReason } from '../overlay/Popover'
 import { RecurrencePickerPopover } from './RecurrencePickerPopover'
 import { WhenPanel } from './WhenPanel'
+
+/** 开始与结束两天，写成任务的字段；null 表示那一天没有。 */
+export interface WhenSpanFields {
+  start_date: string | null
+  end_date: string | null
+}
 
 interface WhenPopoverProps {
   anchorRef: RefObject<HTMLElement | null>
@@ -24,12 +31,27 @@ interface WhenPopoverProps {
    * have different ones) and must still be able to clear them all.
    */
   allowClear?: boolean
+  /**
+   * The task's start date, and its end date when it has one: the panel then offers a span of days
+   * (see `withSpan`). A start/end pair that is a time block shows no span — that time belongs to
+   * the Plan screen, and a date span would replace it.
+   */
+  startDate?: string | null
+  endDate?: string | null
+  /**
+   * Called with the start and end days whenever the span changes: both null when it is turned off.
+   * Without it the panel has no span row at all.
+   */
+  onSpanChange?: (span: WhenSpanFields) => void
 }
 
 /**
  * The Schedule popover: the When panel with Repeat and Clear in the footer. A day or time picked in
  * the grid is applied at once and the popover stays open for the next pick; a quick choice or Enter
  * in the text field applies and closes. Clearing sends the null date.
+ *
+ * With `onSpanChange` the panel also carries the span of days: the end date is the due date, and
+ * the start date is the one extra value.
  */
 export function WhenPopover({
   anchorRef,
@@ -41,10 +63,17 @@ export function WhenPopover({
   repeatMode = 0,
   onRecurrenceChange,
   allowClear = false,
+  startDate = null,
+  endDate = null,
+  onSpanChange,
 }: WhenPopoverProps) {
   const repeatButtonRef = useRef<HTMLButtonElement>(null)
-  const [value, setValue] = useState<WhenValue>(() => whenValueOfDue(currentDate))
+  const block = isTimeBlock(startDate, endDate)
+  const withSpan = !!onSpanChange && !block
+  const [value, setValue] = useState<WhenValue>(() => (withSpan ? whenValueOf(currentDate, startDate) : whenValueOf(currentDate)))
   const [showRecurrence, setShowRecurrence] = useState(false)
+  /** Whether the span row was on: turning it off must write the null dates, once. */
+  const hadSpan = useRef(value.span != null)
 
   const hasRecurrence = detectRecurrencePreset(repeatAfter, repeatMode) !== 'none'
   const hasDate = value.date !== null
@@ -53,17 +82,32 @@ export function WhenPopover({
     setValue(next)
     const due = dueOfWhenValue(next)
     if (due) onDateChange(due)
+    if (onSpanChange && withSpan) {
+      const span = spanOfWhenValue(next)
+      if (span) {
+        hadSpan.current = true
+        onSpanChange(span)
+      } else if (hadSpan.current) {
+        hadSpan.current = false
+        onSpanChange({ start_date: null, end_date: null })
+      }
+    }
     if (commit) onClose()
   }
 
   const clear = () => {
     onDateChange(NULL_DATE)
+    // Clearing the date clears the span it ends too; without one there is nothing to write.
+    if (onSpanChange && withSpan && (value.span || hadSpan.current)) {
+      hadSpan.current = false
+      onSpanChange({ start_date: null, end_date: null })
+    }
     onClose()
   }
 
   return (
     <Popover anchorRef={anchorRef} onClose={onClose} placement={placement} label="Schedule" className="w-72 p-3">
-      <WhenPanel value={value} onChange={change} />
+      <WhenPanel value={value} onChange={change} withSpan={withSpan} />
 
       {(hasDate || allowClear || onRecurrenceChange) && (
         <div className="relative mt-2 flex items-center justify-between gap-1 border-t border-[var(--border-color)] pt-2">

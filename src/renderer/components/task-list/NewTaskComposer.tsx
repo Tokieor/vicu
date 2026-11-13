@@ -46,7 +46,7 @@ import type { CreateTaskPayload, Label, Task, TaskReminder } from '@/lib/vikunja
 import type { ChipData } from '@/lib/parse-chips'
 import { TaskInputParser } from '@/components/task-input/TaskInputParser'
 import { TaskDescription, type PendingImage } from './TaskDescription'
-import { WhenPopover } from './WhenPopover'
+import { WhenPopover, type WhenSpanFields } from './WhenPopover'
 import { PriorityPickerPopover, PRIORITY_OPTIONS } from './PriorityPickerPopover'
 import { ProjectPickerPopover } from './ProjectPickerPopover'
 import { ReminderPickerPopover } from './ReminderPickerPopover'
@@ -161,6 +161,8 @@ export function NewTaskComposer({
   const labelsButtonRef = useRef<HTMLButtonElement>(null)
   const projectButtonRef = useRef<HTMLButtonElement>(null)
   const [explicitDueDate, setExplicitDueDate] = useState<string | null>(() => (template ? templateDueDate(template.due, toLocalDate(new Date())) ?? NULL_DATE : null))
+  /** 面板里手选的开始/结束两天；动过之后压过文本里的时间段。 */
+  const [explicitSpan, setExplicitSpan] = useState<WhenSpanFields | null>(null)
   const [dateTouched, setDateTouched] = useState(!!template)
   const [defaultDateDismissed, setDefaultDateDismissed] = useState(false)
   const [priority, setPriority] = useState<number | null>(template ? template.priority ?? 0 : null)
@@ -186,6 +188,7 @@ export function NewTaskComposer({
     parsed: read,
     dueTouched: dateTouched,
     dueValue: explicitDueDate,
+    spanValue: explicitSpan,
     contextDue: defaultDueDate ? dateOnlyIso(defaultDueDate) : null,
     contextDueDismissed: defaultDateDismissed,
     priority,
@@ -256,6 +259,7 @@ export function NewTaskComposer({
     setShowNotes(false)
     setOpenPicker(null)
     setExplicitDueDate(null)
+    setExplicitSpan(null)
     setDateTouched(false)
     setDefaultDateDismissed(false)
     setPriority(null)
@@ -399,6 +403,8 @@ export function NewTaskComposer({
       const draftDescription = description.trim()
       if (draftDescription) payload.description = draftDescription
       if (saved.dueDate) payload.due_date = saved.dueDate
+      // 时间段（开始–结束两天）；时间块与它互斥，两者都写时以时间块为准。
+      if (saved.span) Object.assign(payload, saved.span)
       if (saved.block) Object.assign(payload, saved.block)
       if (saved.priority > 0) payload.priority = saved.priority
       if (reminders.length) payload.reminders = reminders
@@ -609,7 +615,7 @@ export function NewTaskComposer({
           <ActionButton buttonRef={dateButtonRef} popup="dialog" expanded={openPicker === 'date'} active={effectiveDueDate !== NULL_DATE || fields.repeatSource !== null} label="Date and repeat" onClick={() => setOpenPicker(openPicker === 'date' ? null : 'date')}>
             <CalendarDays className="h-3.5 w-3.5" /> {shortDate(effectiveDueDate, dateFormat)}
           </ActionButton>
-          {openPicker === 'date' && <WhenPopover anchorRef={dateButtonRef} currentDate={effectiveDueDate} onDateChange={(value) => { setDateTouched(true); setExplicitDueDate(value); parser.pinType('date') }} repeatAfter={effectiveRepeatAfter} repeatMode={effectiveRepeatMode} onRecurrenceChange={(after, mode) => { setRecurrenceTouched(true); setRepeatAfter(after); setRepeatMode(mode); parser.pinType('recurrence') }} onClose={() => setOpenPicker(null)} />}
+          {openPicker === 'date' && <WhenPopover anchorRef={dateButtonRef} currentDate={effectiveDueDate} startDate={fields.span?.start_date ?? null} endDate={fields.span?.end_date ?? null} onDateChange={(value) => { setDateTouched(true); setExplicitDueDate(value); parser.pinType('date') }} onSpanChange={(span) => { setDateTouched(true); setExplicitSpan(span); parser.pinType('date') }} repeatAfter={effectiveRepeatAfter} repeatMode={effectiveRepeatMode} onRecurrenceChange={(after, mode) => { setRecurrenceTouched(true); setRepeatAfter(after); setRepeatMode(mode); parser.pinType('recurrence') }} onClose={() => setOpenPicker(null)} />}
         </div>
         <div className="relative">
           <ActionButton buttonRef={reminderButtonRef} popup="dialog" expanded={openPicker === 'reminder'} active={reminders.length > 0} label="Reminder" onClick={() => setOpenPicker(openPicker === 'reminder' ? null : 'reminder')}>

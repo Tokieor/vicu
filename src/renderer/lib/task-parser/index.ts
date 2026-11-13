@@ -9,8 +9,9 @@ import { extractDate, extractBangToday } from './extract-dates'
 import { findForPhrases } from './extract-length'
 import { matchPlacePhrase, type PlaceRef } from './place-phrases'
 import { isTimeBlock } from '../../../shared/time-blocks'
+import { dateOnlyDue, toLocalDate } from '../../../shared/due-dates'
 
-export type { ParseResult, ParserConfig, ParsedToken, ParsedRecurrence, SyntaxMode, TokenType, SyntaxPrefixes } from './types'
+export type { ParseResult, ParserConfig, ParsedToken, ParsedRecurrence, SyntaxMode, TokenType, SyntaxPrefixes, DateSpan } from './types'
 export { DEFAULT_PARSER_CONFIG, getPrefixes, readsChineseDates } from './types'
 export { recurrenceToVikunja } from './recurrence-map'
 export { getParserConfig } from './config-bridge'
@@ -44,6 +45,7 @@ export function parse(
     dueDate: null,
     dueHasTime: false,
     block: null,
+    span: null,
     priority: null,
     labels: [],
     project: null,
@@ -144,6 +146,7 @@ export function parse(
     if (!found) found = extractDate(rawInput, consumed, { ...dateOptions, prefer: weekday })
     result.dueDate = found.dueDate
     result.dueHasTime = found.hasTime
+    result.span = found.span
     result.tokens.push(...found.tokens)
   } else if (weekday) {
     // The date was dismissed: "every monday" is only the recurrence.
@@ -192,6 +195,15 @@ export function parse(
 export function blockFields(result: Pick<ParseResult, 'block'> | null | undefined): { start_date: string; end_date: string } | null {
   if (!result?.block) return null
   return { start_date: result.block.start.toISOString(), end_date: result.block.end.toISOString() }
+}
+
+/**
+ * A parsed date span as the fields of a task: the two days, both date-only (local 23:59:59).
+ * Null when the text named no span.
+ */
+export function spanFields(result: Pick<ParseResult, 'span'> | null | undefined): { start_date: string; end_date: string } | null {
+  if (!result?.span) return null
+  return { start_date: dateOnlyDue(toLocalDate(result.span.start)), end_date: dateOnlyDue(toLocalDate(result.span.end)) }
 }
 
 /**

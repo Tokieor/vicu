@@ -414,6 +414,9 @@ the date and recurrence rules.
   Friday with the title "Trip to sunday", and "Meeting tomorrow 3pm to 5pm" is due tomorrow
   at 15:00 with the title "Meeting to 5pm". A range written as one word ("3-5pm") is not a
   date phrase.
+- 中文语法模式（Vicu 的「中文」语法，见 `zh-dates.ts`）是这条规则的唯一例外：两个日期短语中间
+  只隔一个连词（`到`、`至`、`~`、短横线）时读成一个**时间段**——开始与结束两天，
+  截止日期取结束那天。「11月10日到11月15日」「10号至15号」「周一~周五」。英文规则不受影响。
 - `now` is never a date.
 - The `!` today shortcut has one rule in every entry point: a standalone `!`, a leading `!`
   (not followed by a priority token such as `!1` or `!high`) or a trailing `!` means today

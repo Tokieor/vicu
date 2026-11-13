@@ -29,6 +29,17 @@ export interface ParsedRecurrence {
   unit: 'day' | 'week' | 'month' | 'year'
 }
 
+/**
+ * 文本写出的时间段（「11月10日到11月15日」「10号至15号」）：开始与结束两天。
+ * 只有中文解析（`zhGrammar`）会读出来——英文按契约没有区间（"friday to sunday" 就是周五）。
+ */
+export interface DateSpan {
+  /** 开始那天的本地 12:00。 */
+  start: Date
+  /** 结束那天的本地 12:00；截止日期取这一天。 */
+  end: Date
+}
+
 export interface ParseResult {
   title: string
   dueDate: Date | null
@@ -43,6 +54,11 @@ export interface ParseResult {
    * that day, date-only: `dueHasTime` is false and the block holds the time.
    */
   block: { start: Date; end: Date } | null
+  /**
+   * 文本写出的时间段（中文「11月10日到11月15日」），两端各是哪一天。此时 `dueDate` 是结束那天，
+   * 任务按 Vikunja 的开始/结束日期落成一段；没有时间段时为 null。
+   */
+  span: DateSpan | null
   priority: number | null
   labels: string[]
   project: string | null

@@ -1,6 +1,6 @@
 import * as chrono from 'chrono-node'
 import { nextWeekStart, startOfLocalDay, toLocalDate } from '../due-dates'
-import type { ParsedToken } from './types'
+import type { DateSpan, ParsedToken } from './types'
 import { parseZhDate } from './zh-dates'
 
 /**
@@ -16,7 +16,8 @@ import { parseZhDate } from './zh-dates'
  * - text another extractor took splits a date phrase: "call tomorrow @home 3pm" is due tomorrow
  *   and keeps "3pm" in the title, where chrono would read across the label;
  * - there are no ranges: "trip friday to sunday" is due Friday and keeps "to sunday", and a range
- *   written as one word ("3-5pm") is not a date;
+ *   written as one word ("3-5pm") is not a date. Chinese is the one exception: "11月10日到11月15日"
+ *   is a start and an end date (see zh-dates.ts), read only in the Chinese syntax mode;
  * - "weekend" and "weekday" are words, not dates (chrono reads them as Saturday and the next
  *   working day);
  * - phrases about the past ("yesterday", "last friday", "2 days ago") are not dates;
@@ -98,9 +99,9 @@ export function extractDate(
   input: string,
   consumed: Array<{ start: number; end: number }>,
   options: ExtractDateOptions = {},
-): { dueDate: Date | null; hasTime: boolean; tokens: ParsedToken[] } {
+): { dueDate: Date | null; hasTime: boolean; span: DateSpan | null; tokens: ParsedToken[] } {
   const tokens: ParsedToken[] = []
-  const none = { dueDate: null, hasTime: false, tokens }
+  const none = { dueDate: null, hasTime: false, span: null, tokens }
 
   const reference = options.reference ?? new Date()
   const chronoOptions = { forwardDate: true }
@@ -129,7 +130,12 @@ export function extractDate(
         value: zh.date,
         raw: input.slice(zh.start, zh.end),
       })
-      return { dueDate: zh.date, hasTime: zh.hasTime, tokens }
+      return {
+        dueDate: zh.date,
+        hasTime: zh.hasTime,
+        span: zh.range ? { start: zh.range.from, end: zh.range.to } : null,
+        tokens,
+      }
     }
   }
 
@@ -221,7 +227,7 @@ export function extractDate(
     })
   }
 
-  return { dueDate, hasTime, tokens }
+  return { dueDate, hasTime, span: null, tokens }
 }
 
 /** `span` without the hidden regions and the spaces next to them. */

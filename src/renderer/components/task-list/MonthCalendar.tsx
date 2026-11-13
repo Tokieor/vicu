@@ -18,6 +18,8 @@ interface MonthCalendarProps {
   onPick: (date: LocalDate) => void
   /** A day that cannot be picked (a past day for a time block). */
   isDisabled?: (date: LocalDate) => boolean
+  /** The days of a picked span: they get a quiet fill between the two ends. */
+  band?: { from: LocalDate; to: LocalDate } | null
 }
 
 const MONDAY = new Date(2026, 9, 5)
@@ -26,7 +28,7 @@ const MONDAY = new Date(2026, 9, 5)
  * A month of six Monday-first weeks (`monthGrid`, the same grid as Android's MonthCalendar) with the
  * month arrows and arrow-key movement. The When panel and the planner's day picker use it.
  */
-export function MonthCalendar({ selected, today, reveal, onPick, isDisabled }: MonthCalendarProps) {
+export function MonthCalendar({ selected, today, reveal, onPick, isDisabled, band }: MonthCalendarProps) {
   const fmt = useDateFormat()
   const opening = reveal?.date ?? selected ?? today
   const [viewMonth, setViewMonth] = useState(() => monthStart(opening))
@@ -114,6 +116,7 @@ export function MonthCalendar({ selected, today, reveal, onPick, isDisabled }: M
             {week.map((day) => {
               const isSelected = day.date === selected
               const isToday = day.date === today
+              const inBand = !!band && day.date >= band.from && day.date <= band.to
               const disabled = isDisabled?.(day.date) === true
               return (
                 <div key={day.date} role="gridcell" aria-selected={isSelected} className="flex justify-center">
@@ -137,6 +140,7 @@ export function MonthCalendar({ selected, today, reveal, onPick, isDisabled }: M
                             !disabled && 'hover:bg-[var(--bg-hover)]',
                             day.inMonth ? 'text-[var(--text-primary)]' : 'text-[var(--text-secondary)]',
                           ),
+                      !isSelected && inBand && 'bg-[var(--bg-selected)] text-[var(--text-primary)]',
                       isToday && 'ring-1 ring-inset ring-[var(--accent-blue)]',
                     )}
                   >
