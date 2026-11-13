@@ -6,6 +6,7 @@ import { addLocalDays, dateOnlyDue, localDateOf } from '../../../shared/due-date
 import { atClock } from '../../../shared/time-blocks'
 import {
   MAX_SPAN_DAYS,
+  calendarBands,
   calendarIndex,
   calendarTopRow,
   calendarItemsFor,
@@ -232,5 +233,79 @@ describe('calendarTopRow', () => {
   it('offers a done task whose due date has a clock, since no marker is drawn for it', () => {
     const tasks = [task({ id: 1, done: true, due_date: atClock('2026-11-12', 19 * 60).toISOString() })]
     expect(calendarTopRow(tasks, '2026-11-12').map((entry) => entry.id)).toEqual([1])
+  })
+})
+
+describe('calendarBands', () => {
+  const WEEK = ['2026-11-09', '2026-11-10', '2026-11-11', '2026-11-12', '2026-11-13', '2026-11-14', '2026-11-15']
+
+  it('draws one bar for a stretch inside the week', () => {
+    const tasks = [spanning('2026-11-10', '2026-11-12', { id: 1 })]
+    expect(calendarBands(tasks, WEEK)).toEqual([
+      { task: tasks[0], from: '2026-11-10', to: '2026-11-12', lane: 0, continuesLeft: false, endsLater: false },
+    ])
+  })
+
+  it('cuts a stretch that began before the week and marks the cut', () => {
+    const tasks = [spanning('2026-11-05', '2026-11-11', { id: 1 })]
+    const [band] = calendarBands(tasks, WEEK)
+    expect(band.from).toBe('2026-11-09')
+    expect(band.to).toBe('2026-11-11')
+    expect(band.continuesLeft).toBe(true)
+    expect(band.endsLater).toBe(false)
+  })
+
+  it('cuts both ends when the week sits inside a long stretch', () => {
+    const tasks = [spanning('2026-10-01', '2026-12-01', { id: 1 })]
+    const [band] = calendarBands(tasks, WEEK)
+    expect([band.from, band.to, band.continuesLeft, band.endsLater]).toEqual(['2026-11-09', '2026-11-15', true, true])
+  })
+
+  it('leaves out a task that is not on these days at all', () => {
+    expect(calendarBands([spanning('2026-10-01', '2026-10-05', { id: 1 })], WEEK)).toEqual([])
+    expect(calendarBands([spanning('2026-12-01', '2026-12-05', { id: 1 })], WEEK)).toEqual([])
+  })
+
+  it('leaves out single days and time blocks, which the grid already draws', () => {
+    const tasks = [dueOn('2026-11-10', { id: 1 }), blockOn('2026-11-10', 9 * 60, 10 * 60, { id: 2 })]
+    expect(calendarBands(tasks, WEEK)).toEqual([])
+  })
+
+  it('packs overlapping stretches into lanes, longest first', () => {
+    const tasks = [
+      spanning('2026-11-10', '2026-11-11', { id: 1 }),
+      spanning('2026-11-10', '2026-11-13', { id: 2 }),
+      spanning('2026-11-12', '2026-11-13', { id: 3 }),
+    ]
+    const bands = calendarBands(tasks, WEEK)
+    // The longest takes the top lane; the two short ones share the lane below without touching.
+    expect(bands.map((band) => [band.task.id, band.lane])).toEqual([
+      [2, 0],
+      [1, 1],
+      [3, 1],
+    ])
+  })
+})
+
+describe('the clock a dated row names', () => {
+  it('takes the due clock when the due date carries one', () => {
+    const [item] = calendarItemsFor(task({ due_date: atClock('2026-11-12', 10 * 60).toISOString() }), SHOWN)
+    expect(item.kind).toBe('dated')
+    expect(item.kind === 'dated' ? item.atMin : null).toBe(600)
+  })
+
+  it('says nothing about a date-only due date', () => {
+    const [item] = calendarItemsFor(dueOn('2026-11-12'), SHOWN)
+    expect(item.kind === 'dated' ? item.atMin : null).toBeUndefined()
+  })
+
+  it('falls back to a clocked start date', () => {
+    const [item] = calendarItemsFor(task({ start_date: atClock('2026-11-12', 8 * 60).toISOString() }), SHOWN)
+    expect(item.kind === 'dated' ? item.atMin : null).toBe(480)
+  })
+
+  it('leaves a time block to its own row', () => {
+    const [item] = calendarItemsFor(blockOn('2026-11-12', 9 * 60, 10 * 60), SHOWN)
+    expect(item.kind).toBe('timed')
   })
 })

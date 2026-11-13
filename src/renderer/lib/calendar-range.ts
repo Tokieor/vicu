@@ -2,8 +2,20 @@
 // passed in — so the month grid and the agenda can be tested without a renderer
 // (docs/calendar-views-plan.md section 4.1).
 
-import { addLocalDays, diffLocalDays, startOfLocalDay, startOfWeek, toLocalDate, type LocalDate } from '../../shared/due-dates'
+import {
+  addLocalDays,
+  diffLocalDays,
+  isDateOnly,
+  isNoDueDate,
+  startOfLocalDay,
+  startOfWeek,
+  toLocalDate,
+  type LocalDate,
+} from '../../shared/due-dates'
 import type { CalendarViewKind } from '../../shared/config-types'
+import { blockOf } from '../../shared/time-blocks'
+import type { DateFormat } from '../../shared/date-display'
+import { taskDays, type CalendarTaskFields } from './calendar-items'
 import { getLocale, type Locale } from '../../shared/i18n'
 
 /** A month is always six weeks long, so turning the page never changes the grid's height. */
@@ -143,4 +155,34 @@ export const CALENDAR_LOCALE_TAGS: Record<Locale, string> = { en: 'en-US', zh: '
 
 export function localeFor(locale: Locale = getLocale()): string {
   return CALENDAR_LOCALE_TAGS[locale] ?? CALENDAR_LOCALE_TAGS.en
+}
+
+/**
+ * The stretch a task covers, written for a chip: "11/10 – 11/13", with the clock on each end when
+ * the date carries one ("11/10 09:00 – 11/13 18:00"). Null when the task sits on a single day or on
+ * a time block, which the grid already draws as itself.
+ */
+export function spanLabel(task: CalendarTaskFields, fmt: DateFormat): string | null {
+  const days = taskDays(task)?.days
+  if (!days || days.length < 2 || blockOf(task)) return null
+
+  const from = days[0]
+  const to = days[days.length - 1]
+  // A year is only worth its two digits when the stretch straddles one.
+  const withYear = from.slice(0, 4) !== to.slice(0, 4)
+  const dayFormat = new Intl.DateTimeFormat(fmt.locale, {
+    ...(withYear ? { year: 'numeric' as const } : {}),
+    month: 'numeric',
+    day: 'numeric',
+  })
+  const clockFormat = new Intl.DateTimeFormat(fmt.locale, { hour: 'numeric', minute: '2-digit', hour12: fmt.hour12 })
+
+  const end = (day: LocalDate, stamp: string | null | undefined) => {
+    const text = dayFormat.format(startOfLocalDay(day))
+    // A date-only stamp is UTC midnight: it says nothing about the clock and must not show one.
+    if (isNoDueDate(stamp) || isDateOnly(stamp as string)) return text
+    return `${text} ${clockFormat.format(new Date(stamp as string))}`
+  }
+
+  return `${end(from, task.start_date)} – ${end(to, task.end_date)}`
 }

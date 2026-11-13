@@ -2,7 +2,9 @@
 // docs/calendar-views-plan.md section 4.1.
 
 import { describe, expect, it } from 'vitest'
-import { diffLocalDays, isoWeekday } from '../../../shared/due-dates'
+import { dateOnlyDue, diffLocalDays, isoWeekday } from '../../../shared/due-dates'
+import { atClock } from '../../../shared/time-blocks'
+import type { CalendarTaskFields } from '../calendar-items'
 import {
   AGENDA_BACK_DAYS,
   MONTH_GRID_DAYS,
@@ -15,6 +17,7 @@ import {
   monthLabel,
   pickMonth,
   shiftAnchor,
+  spanLabel,
   startOfMonth,
 } from '../calendar-range'
 
@@ -135,5 +138,37 @@ describe('titles', () => {
 
   it('adds the year to a week that straddles New Year', () => {
     expect(calendarTitle('week', '2026-12-30', 'en-US')).toMatch(/Dec\s?28\s?.{1,3}\s?Jan\s?3,?\s?2027/)
+  })
+})
+
+describe('spanLabel', () => {
+  const ZH = { locale: 'zh-CN', hour12: false }
+  const EN = { locale: 'en-US', hour12: false }
+
+  /** A task covering several days through its start and end dates. */
+  function spanning(start: string, end: string, extra: Partial<CalendarTaskFields> = {}) {
+    return { id: 1, done: false, priority: 0, project_id: 1, start_date: start, end_date: end, due_date: null, ...extra }
+  }
+
+  it('writes both ends of a date-only stretch', () => {
+    expect(spanLabel(spanning(dateOnlyDue('2026-11-10'), dateOnlyDue('2026-11-13')), ZH)).toBe('11/10 – 11/13')
+    expect(spanLabel(spanning(dateOnlyDue('2026-11-10'), dateOnlyDue('2026-11-13')), EN)).toBe('11/10 – 11/13')
+  })
+
+  it('adds the clock when the date carries one', () => {
+    const task = spanning(atClock('2026-11-10', 9 * 60).toISOString(), atClock('2026-11-13', 18 * 60).toISOString())
+    // 'numeric' hours, as every other time in the app is written: "9:00", not "09:00".
+    expect(spanLabel(task, ZH)).toBe('11/10 9:00 – 11/13 18:00')
+  })
+
+  it('carries the year only when the stretch crosses one', () => {
+    expect(spanLabel(spanning(dateOnlyDue('2026-12-30'), dateOnlyDue('2027-01-02')), ZH)).toBe('2026/12/30 – 2027/1/2')
+  })
+
+  it('says nothing about a single day or a time block', () => {
+    expect(spanLabel(spanning(dateOnlyDue('2026-11-10'), dateOnlyDue('2026-11-10')), ZH)).toBeNull()
+    expect(
+      spanLabel(spanning(atClock('2026-11-10', 9 * 60).toISOString(), atClock('2026-11-10', 10 * 60).toISOString()), ZH),
+    ).toBeNull()
   })
 })

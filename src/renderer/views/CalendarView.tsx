@@ -198,6 +198,7 @@ function CalendarBody({
           selectedDay={anchor}
           tasks={tasks}
           onOpenDay={onOpenDay}
+          onOpenTask={onOpenTask}
           onChange={onChange}
           showRoutines={showRoutines}
         />

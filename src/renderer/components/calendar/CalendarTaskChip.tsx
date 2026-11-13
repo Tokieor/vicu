@@ -1,5 +1,6 @@
 import { cn } from '@/lib/cn'
 import { formatBlockRange, type DateFormat } from '@/lib/date-display'
+import { spanLabel } from '@/lib/calendar-range'
 import { useDateFormat } from '@/hooks/use-date-format'
 import { atClock } from '../../../shared/time-blocks'
 import type { CalendarItem } from '@/lib/calendar-items'
@@ -34,12 +35,18 @@ interface CalendarTaskChipProps {
 export function CalendarTaskChip({ item, color, variant, onOpen, onPointerDown }: CalendarTaskChipProps) {
   const fmt = useDateFormat()
   const { task } = item
-  const time =
-    item.kind === 'timed'
+  // A task covering several days says which: the agenda has room for it, the month cell does not.
+  const span = variant === 'agenda' ? spanLabel(task, fmt) : null
+  // The bar's label already names both ends and their clocks; a second clock would only repeat it.
+  const time = span
+    ? null
+    : item.kind === 'timed'
       ? variant === 'month'
         ? clockText(item.day, item.startMin, fmt)
         : formatBlockRange(atClock(item.day, item.startMin), atClock(item.day, item.endMin), fmt)
-      : null
+      : item.atMin !== undefined
+        ? clockText(item.day, item.atMin, fmt)
+        : null
   const arrow = item.continues ? '↳' : item.endsLater ? '→' : null
 
   return (
@@ -70,6 +77,7 @@ export function CalendarTaskChip({ item, color, variant, onOpen, onPointerDown }
           {task.title}
         </span>
       </span>
+      {span && <span className="relative shrink-0 pl-2 text-text-secondary">{span}</span>}
     </button>
   )
 }

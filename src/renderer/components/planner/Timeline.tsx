@@ -85,7 +85,31 @@ interface TimelineProps {
    * has no end, which would otherwise be drawn nowhere (docs/calendar-views-plan.md 3.2).
    */
   topRowOf?: (day: LocalDate) => Task[]
+  /**
+   * Tasks that cross days, drawn as one bar above the day chips instead of a chip on each day.
+   * Only the calendar passes any; the Plan screen has no bars and looks exactly as it did.
+   */
+  bands?: readonly TimelineBand[]
+  /** A press on a bar. */
+  onPressBand?: (task: Task) => void
 }
+
+/** One bar over the all-day row: a task covering several days, cut to what the week shows. */
+export interface TimelineBand {
+  task: Task
+  /** The first and last day the bar covers, both on screen. */
+  from: LocalDate
+  to: LocalDate
+  /** Which row of bars it sits on, so overlapping bars never cover each other. */
+  lane: number
+  /** The task began before the first day shown. */
+  continuesLeft?: boolean
+  /** It ends after the last day shown. */
+  endsLater?: boolean
+}
+
+/** Height of one row of bars, in pixels: the chip's own height plus the gap between rows. */
+const BAND_ROW_PX = 22
 
 const GUTTER_CLASS = 'w-14 shrink-0'
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour)
@@ -298,6 +322,8 @@ export function Timeline({
   pageTurn,
   dimDays,
   topRowOf,
+  bands,
+  onPressBand,
 }: TimelineProps) {
   const fmt = useDateFormat()
   const now = useMinuteClock()
@@ -437,6 +463,8 @@ export function Timeline({
   const singleDay = days[0]
   // Which tasks sit in the row above the grid. Plan keeps its own rule; the calendar passes its own.
   const topRowOn = (day: LocalDate): Task[] => (topRowOf ? topRowOf(day) : dayTopRow(tasks, day))
+  const bandList = bands ?? []
+  const bandLanes = bandList.length ? Math.max(...bandList.map((band) => band.lane)) + 1 : 0
   const singleDayTop = multiDay ? [] : topRowOn(singleDay)
   const dropRowOnly = !multiDay && singleDayTop.length === 0 && dragging && canPlaceOn(singleDay, today)
   const dayTopRowView = (
@@ -486,22 +514,74 @@ export function Timeline({
               )
             })}
           </div>
-          <div ref={topRowRef} className="flex border-t border-border" aria-label="Tasks without a time">
-            <div className={cn(GUTTER_CLASS, 'flex items-center justify-end pr-2 text-caption text-text-secondary')} />
-            {days.map((day) => (
-              <DayTopRow
-                key={day}
-                day={day}
-                tasks={topRowOn(day)}
-                canDrop={canPlaceOn(day, today)}
-                canChange={canChange}
-                highlighted={topOver === day}
-                colors={projectColor}
-                onDropTasks={(dropped) => {
-                  for (const task of dropped) onChange(task, planForDay(task, day))
-                }}
-              />
-            ))}
+          <div ref={topRowRef} className="border-t border-border" aria-label="Tasks without a time">
+            <div className="flex">
+              <div className={cn(GUTTER_CLASS, 'flex items-center justify-end pr-2 text-caption text-text-secondary')} />
+              <div className="relative min-w-0 flex-1">
+                {/* The bars of tasks that cross days sit above the day chips, one lane each. */}
+                {bandLanes > 0 && (
+                  <>
+                    <div aria-hidden="true" style={{ height: bandLanes * BAND_ROW_PX }} />
+                    <div className="pointer-events-none absolute inset-x-0 top-0">
+                      {bandList.map((band) => {
+                        const start = days.indexOf(band.from)
+                        const count = days.indexOf(band.to) - start + 1
+                        if (start < 0 || count < 1) return null
+                        return (
+                          <button
+                            key={band.task.id}
+                            type="button"
+                            data-plan-band={band.task.id}
+                            title={band.task.title}
+                            onClick={() => onPressBand?.(band.task)}
+                            style={{
+                              left: `calc(${(start / days.length) * 100}% + 2px)`,
+                              width: `calc(${(count / days.length) * 100}% - 4px)`,
+                              top: band.lane * BAND_ROW_PX,
+                              borderLeftColor: projectColor.get(band.task.project_id) ?? 'var(--border-color)',
+                            }}
+                            className={cn(
+                              'pointer-events-auto absolute flex h-5 items-center overflow-hidden border border-border bg-bg-card pl-1.5 pr-1.5 text-left text-caption text-text hover:bg-bg-hover',
+                              band.continuesLeft ? 'rounded-l-none border-l-0 pl-1' : 'rounded-l-chip border-l-[3px]',
+                              band.endsLater ? 'rounded-r-none' : 'rounded-r-chip',
+                            )}
+                          >
+                            {projectColor.get(band.task.project_id) && (
+                              <span
+                                aria-hidden="true"
+                                className="pointer-events-none absolute inset-0"
+                                style={{ backgroundColor: `${projectColor.get(band.task.project_id)}1f` }}
+                              />
+                            )}
+                            <span className="relative min-w-0 truncate">
+                              {band.continuesLeft && <span className="mr-0.5 text-text-secondary">↳</span>}
+                              {band.task.title}
+                            </span>
+                            {band.endsLater && <span className="relative ml-auto pl-1 text-text-secondary">→</span>}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </>
+                )}
+                <div className="flex">
+                  {days.map((day) => (
+                    <DayTopRow
+                      key={day}
+                      day={day}
+                      tasks={topRowOn(day)}
+                      canDrop={canPlaceOn(day, today)}
+                      canChange={canChange}
+                      highlighted={topOver === day}
+                      colors={projectColor}
+                      onDropTasks={(dropped) => {
+                        for (const task of dropped) onChange(task, planForDay(task, day))
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}

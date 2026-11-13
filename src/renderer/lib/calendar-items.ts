@@ -2,7 +2,15 @@
 // stored, and every date goes through `due-dates` so a daylight-saving week cannot shift a task to
 // the day before (docs/calendar-views-plan.md section 2).
 
-import { addLocalDays, diffLocalDays, isDateOnly, isNoDueDate, localDateOf, type LocalDate } from '../../shared/due-dates'
+import {
+  addLocalDays,
+  diffLocalDays,
+  isDateOnly,
+  isNoDueDate,
+  localDateOf,
+  toLocalDate,
+  type LocalDate,
+} from '../../shared/due-dates'
 import { blockOf, minutesOfDay } from '../../shared/time-blocks'
 
 /** A task may span a year at most before the calendar stops drawing every day of it. */
@@ -31,7 +39,7 @@ interface CalendarItemBase<T> {
 
 export type CalendarItem<T extends CalendarTaskFields = CalendarTaskFields> =
   | (CalendarItemBase<T> & { kind: 'timed'; startMin: number; endMin: number })
-  | (CalendarItemBase<T> & { kind: 'dated' })
+  | (CalendarItemBase<T> & { kind: 'dated'; atMin?: number })
 
 export interface CalendarItemOptions {
   /** Show tasks that are already done (Settings → Calendar; off by default). */
@@ -101,14 +109,23 @@ export function calendarItemsFor<T extends CalendarTaskFields>(
     day,
     continues: occupied.continues[index],
     endsLater: occupied.endsLater[index],
+    // A day the task names a clock for says so: the week draws a due time as a marker, and the
+    // month cell and the agenda should not lose it.
+    atMin: clockOn(task.due_date, day) ?? clockOn(task.start_date, day),
   }))
+}
+
+/** The minute of a stamp that carries a clock and falls on `day`; undefined for a date-only one. */
+function clockOn(stamp: string | null | undefined, day: LocalDate): number | undefined {
+  if (isNoDueDate(stamp) || isDateOnly(stamp as string)) return undefined
+  const at = new Date(stamp as string)
+  return toLocalDate(at) === day ? minutesOfDay(at) : undefined
 }
 
 /**
  * Timed rows first, by the clock; then the date-only ones. Within a group the urgent comes first,
  * then done ones sink, then the id keeps the order stable between renders.
- */
-export function compareCalendarItems(a: CalendarItem, b: CalendarItem): number {
+ */export function compareCalendarItems(a: CalendarItem, b: CalendarItem): number {
   if (a.kind !== b.kind) return a.kind === 'timed' ? -1 : 1
   if (a.kind === 'timed' && b.kind === 'timed' && a.startMin !== b.startMin) return a.startMin - b.startMin
   if (a.task.done !== b.task.done) return a.task.done ? 1 : -1
@@ -174,6 +191,74 @@ function clockOf(task: CalendarTaskFields): number {
 
 function minuteIfClocked(stamp: string | null | undefined): number {
   return isNoDueDate(stamp) || isDateOnly(stamp as string) ? 0 : minutesOfDay(new Date(stamp as string))
+}
+
+/**
+ * A task that covers more than one day and has no time block: Vikunja's start and end dates as a
+ * stretch of days. The calendar draws it as one bar across the week instead of a chip on each day
+ * (docs/calendar-views-plan.md 3.2).
+ */
+export function isSpanningTask(task: CalendarTaskFields): boolean {
+  const days = taskDays(task)?.days
+  return !blockOf(task) && (days?.length ?? 0) > 1
+}
+
+/** One bar in the week's all-day row, already cut to the days on screen. */
+export interface CalendarBand<T extends CalendarTaskFields = CalendarTaskFields> {
+  task: T
+  /** The first and last day of the part that is on screen. */
+  from: LocalDate
+  to: LocalDate
+  /** The row the bar sits on; two bars that overlap never share one. */
+  lane: number
+  /** The task began before the first day shown, so the bar is cut at the left edge. */
+  continuesLeft: boolean
+  /** It goes on after the last day shown: cut at the right edge. */
+  endsLater: boolean
+}
+
+/**
+ * The bars a week draws. Each spanning task becomes one bar, cut to the days in `days`, and packed
+ * into the first lane where it fits — the way a calendar stacks overlapping all-day events.
+ */
+export function calendarBands<T extends CalendarTaskFields>(
+  tasks: readonly T[],
+  days: readonly LocalDate[],
+): CalendarBand<T>[] {
+  if (days.length === 0) return []
+  const first = days[0]
+  const last = days[days.length - 1]
+
+  const placed: { task: T; start: number; end: number; opens: boolean; closes: boolean }[] = []
+  for (const task of tasks) {
+    if (!isSpanningTask(task)) continue
+    const all = taskDays(task)?.days ?? []
+    const day = all[0]
+    const until = all[all.length - 1]
+    // Off screen entirely: the task ends before the first day, or starts after the last.
+    if (diffLocalDays(first, until) < 0 || diffLocalDays(first, day) > days.length - 1) continue
+    placed.push({
+      task,
+      start: Math.max(0, diffLocalDays(first, day)),
+      end: Math.min(days.length - 1, diffLocalDays(first, until)),
+      opens: diffLocalDays(first, day) < 0,
+      closes: diffLocalDays(first, until) > days.length - 1,
+    })
+  }
+
+  // Longest first so a week-long bar takes the top lane and the short ones tuck underneath.
+  placed.sort((a, b) => a.start - b.start || b.end - a.end || a.task.id - b.task.id)
+  const laneEnds: number[] = []
+  return placed.map(({ task, start, end, opens, closes }) => {
+    let lane = laneEnds.findIndex((taken) => taken < start)
+    if (lane === -1) {
+      lane = laneEnds.length
+      laneEnds.push(end)
+    } else {
+      laneEnds[lane] = end
+    }
+    return { task, from: days[start], to: days[end], lane, continuesLeft: opens, endsLater: closes }
+  })
 }
 
 /** The rows on one day, or an empty list; the caller never has to check for undefined. */
