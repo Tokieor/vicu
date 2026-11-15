@@ -1,6 +1,7 @@
 import { useState, type RefObject } from 'react'
 import { X } from 'lucide-react'
 import { cn } from '@/lib/cn'
+import { t } from '@/lib/i18n'
 import {
   detectRecurrencePreset,
   formatRecurrenceLabel,
@@ -63,14 +64,15 @@ export function RecurrencePickerPopover({
     onRecurrenceChange(0, 0)
   }
 
+  // 数组不是 JSX 文本，i18n 编译插件不会插桩，必须手动 t()。
   const presetButtons: { key: 'daily' | 'weekly' | 'monthly'; label: string }[] = [
-    { key: 'daily', label: 'Daily' },
-    { key: 'weekly', label: 'Weekly' },
-    { key: 'monthly', label: 'Monthly' },
+    { key: 'daily', label: t('Daily') },
+    { key: 'weekly', label: t('Weekly') },
+    { key: 'monthly', label: t('Monthly') },
   ]
 
   return (
-    <Popover anchorRef={anchorRef} onClose={onClose} placement="right-start" label="Repeat" className="w-60 p-3">
+    <Popover anchorRef={anchorRef} onClose={onClose} placement="right-start" label={t('Repeat')} className="w-60 p-3">
       {/* Current recurrence display */}
       {hasRecurrence && (
         <div className="mb-2 flex items-center justify-between rounded-control bg-[var(--bg-hover)] px-2 py-1.5">
@@ -80,8 +82,8 @@ export function RecurrencePickerPopover({
           <button
             type="button"
             onClick={clearRecurrence}
-            aria-label="Clear repeat"
-            title="Clear repeat"
+            aria-label={t('Clear repeat')}
+            title={t('Clear repeat')}
             className="text-[var(--text-secondary)] hover:text-danger"
           >
             <X className="h-3 w-3" />
@@ -90,7 +92,7 @@ export function RecurrencePickerPopover({
       )}
 
       {/* Presets */}
-      <div role="listbox" aria-label="Repeat" className="flex flex-col gap-1">
+      <div role="listbox" aria-label={t('Repeat')} className="flex flex-col gap-1">
         {presetButtons.map(({ key, label }) => (
           <button
             key={key}
@@ -133,7 +135,7 @@ export function RecurrencePickerPopover({
             <span className="text-xs text-[var(--text-secondary)]">Every</span>
             <input
               type="number"
-              aria-label="Repeat every"
+              aria-label={t('Repeat every')}
               min={1}
               max={365}
               value={customValue}
@@ -141,13 +143,13 @@ export function RecurrencePickerPopover({
               className="w-14 rounded-control border border-[var(--border-color)] bg-[var(--bg-secondary)] px-1.5 py-1 text-center text-xs text-[var(--text-primary)]"
             />
             <select
-              aria-label="Repeat unit"
+              aria-label={t('Repeat unit')}
               value={customUnit}
               onChange={(e) => setCustomUnit(e.target.value as CustomUnit)}
               className="rounded-control border border-[var(--border-color)] bg-[var(--bg-secondary)] px-1.5 py-1 text-xs text-[var(--text-primary)]"
             >
-              <option value="days">days</option>
-              <option value="weeks">weeks</option>
+              <option value="days">{t('days')}</option>
+              <option value="weeks">{t('weeks')}</option>
             </select>
           </div>
 
