@@ -123,11 +123,27 @@ function clockOn(stamp: string | null | undefined, day: LocalDate): number | und
 }
 
 /**
- * Timed rows first, by the clock; then the date-only ones. Within a group the urgent comes first,
- * then done ones sink, then the id keeps the order stable between renders.
- */export function compareCalendarItems(a: CalendarItem, b: CalendarItem): number {
-  if (a.kind !== b.kind) return a.kind === 'timed' ? -1 : 1
-  if (a.kind === 'timed' && b.kind === 'timed' && a.startMin !== b.startMin) return a.startMin - b.startMin
+ * The minute of the day a row starts at, whether the clock came from a time block or from a
+ * clocked due/start date. Null for a row that names a day but no clock. Both kinds name a moment
+ * in the same day, so the calendar has to compare them on that moment, not on how it was stored.
+ */
+export function calendarItemMinute(item: CalendarItem): number | null {
+  return item.kind === 'timed' ? item.startMin : (item.atMin ?? null)
+}
+
+/**
+ * The clock first: rows naming a moment go in the order that moment arrives, whatever stored it.
+ * Rows with no clock follow under the agenda's "No time" heading. Within a tie the urgent comes
+ * first, then done ones sink, then the id keeps the order stable between renders.
+ */
+export function compareCalendarItems(a: CalendarItem, b: CalendarItem): number {
+  const aMin = calendarItemMinute(a)
+  const bMin = calendarItemMinute(b)
+  if (aMin !== bMin) {
+    if (aMin === null) return 1
+    if (bMin === null) return -1
+    return aMin - bMin
+  }
   if (a.task.done !== b.task.done) return a.task.done ? 1 : -1
   if (a.task.priority !== b.task.priority) return b.task.priority - a.task.priority
   return a.task.id - b.task.id

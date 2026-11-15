@@ -10,6 +10,7 @@ import {
   calendarIndex,
   calendarTopRow,
   calendarItemsFor,
+  calendarItemMinute,
   compareCalendarItems,
   countOn,
   itemsOn,
@@ -141,15 +142,52 @@ describe('calendarItemsFor', () => {
   })
 })
 
+describe('calendarItemMinute', () => {
+  it('reads the start of a time block', () => {
+    const [item] = calendarItemsFor(blockOn('2026-11-12', 14 * 60, 18 * 60), SHOWN)
+    expect(calendarItemMinute(item)).toBe(840)
+  })
+
+  it('reads the clock of a clocked due date on a dated row', () => {
+    const [item] = calendarItemsFor(task({ due_date: atClock('2026-11-12', 11 * 60).toISOString() }), SHOWN)
+    expect(calendarItemMinute(item)).toBe(660)
+  })
+
+  it('says null for a row that names a day but no clock', () => {
+    expect(calendarItemMinute(calendarItemsFor(dueOn('2026-11-12'), SHOWN)[0])).toBeNull()
+  })
+})
+
 describe('compareCalendarItems', () => {
   const item = (fields: Partial<CalendarTaskFields>, kind: 'timed' | 'dated' = 'dated', startMin = 0): CalendarItem =>
     calendarItemsFor(kind === 'timed' ? blockOn('2026-11-12', startMin, startMin + 30, fields) : dueOn('2026-11-12', fields), WITH_DONE)[0]
 
-  it('puts timed rows before date-only ones', () => {
+  it('orders every row by its clock, a block or a clocked due date alike', () => {
+    // The bug: an 11:00 due date used to sit below a 14:00 block, because blocks sorted first.
+    const dueAtEleven = calendarItemsFor(
+      task({ due_date: atClock('2026-11-12', 11 * 60).toISOString() }),
+      WITH_DONE,
+    )[0]
+    const blockAtTwo = item({}, 'timed', 14 * 60)
+    expect(calendarItemMinute(dueAtEleven)).toBe(660)
+    expect(compareCalendarItems(dueAtEleven, blockAtTwo)).toBeLessThan(0)
+    expect(compareCalendarItems(blockAtTwo, dueAtEleven)).toBeGreaterThan(0)
+  })
+
+  it('puts a row with no clock after one that names a time', () => {
     const timed = item({}, 'timed', 600)
     const dated = item({})
     expect(compareCalendarItems(timed, dated)).toBeLessThan(0)
     expect(compareCalendarItems(dated, timed)).toBeGreaterThan(0)
+  })
+
+  it('breaks a tie between a block and a clocked date by priority and id', () => {
+    const urgent = calendarItemsFor(
+      task({ id: 3, priority: 4, due_date: atClock('2026-11-12', 9 * 60).toISOString() }),
+      WITH_DONE,
+    )[0]
+    const plain = item({ id: 1, priority: 1 }, 'timed', 9 * 60)
+    expect(compareCalendarItems(urgent, plain)).toBeLessThan(0)
   })
 
   it('orders timed rows by the clock', () => {
@@ -186,6 +224,15 @@ describe('calendarIndex', () => {
     expect(itemsOn(index, '2026-11-12').map((entry) => entry.task.id)).toEqual([2, 1])
     expect(countOn(index, '2026-11-13')).toBe(1)
     expect(countOn(index, '2026-11-14')).toBe(0)
+  })
+
+  it('reads one day in the order things happen, whatever stored the clock', () => {
+    const tasks = [
+      dueOn('2026-11-13', { id: 1 }), // 无时刻
+      blockOn('2026-11-13', 14 * 60, 18 * 60, { id: 2 }), // 工作时间 14:00–18:00
+      task({ id: 3, due_date: atClock('2026-11-13', 11 * 60).toISOString() }), // 渲染视频并发布 11:00
+    ]
+    expect(itemsOn(calendarIndex(tasks, SHOWN), '2026-11-13').map((entry) => entry.task.id)).toEqual([3, 2, 1])
   })
 
   it('leaves out days nobody has a task on', () => {

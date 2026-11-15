@@ -4,7 +4,7 @@ import { useDateFormat } from '@/hooks/use-date-format'
 import { t } from '@/lib/i18n'
 import { startOfLocalDay, type LocalDate } from '@/lib/due-dates'
 import { CalendarTaskChip } from './CalendarTaskChip'
-import type { CalendarItem } from '@/lib/calendar-items'
+import { calendarItemMinute, compareCalendarItems, type CalendarItem } from '@/lib/calendar-items'
 import type { Task } from '@/lib/vikunja-types'
 
 interface AgendaDayGroupProps {
@@ -17,15 +17,17 @@ interface AgendaDayGroupProps {
 }
 
 /**
- * One day of the agenda: the date on the left, its tasks on the right. Tasks with a time keep a
- * dot on the line; the ones with no time follow them under their own small heading, so a day reads
- * in the order it will happen (docs/calendar-views-plan.md 3.3).
+ * One day of the agenda: the date on the left, its tasks on the right. Rows that name a clock keep
+ * a dot on the line, in the order they happen — a clocked due date at 11:00 comes before a time
+ * block at 14:00 — and the rows with no clock follow under their own small heading. Sorting here
+ * as well means a caller that hands over unsorted items still reads correctly (3.3).
  */
 export function AgendaDayGroup({ day, items, isToday, colors, onOpenTask, onOpenDay }: AgendaDayGroupProps) {
   const fmt = useDateFormat()
   const date = startOfLocalDay(day)
-  const timed = items.filter((item) => item.kind === 'timed')
-  const dated = items.filter((item) => item.kind === 'dated')
+  const ordered = [...items].sort(compareCalendarItems)
+  const clocked = ordered.filter((item) => calendarItemMinute(item) !== null)
+  const untimed = ordered.filter((item) => calendarItemMinute(item) === null)
 
   return (
     <div
@@ -47,7 +49,7 @@ export function AgendaDayGroup({ day, items, isToday, colors, onOpenTask, onOpen
       </button>
 
       <div className="min-w-0 space-y-0.5 border-l border-border pl-3">
-        {timed.map((item) => (
+        {clocked.map((item) => (
           <div key={`${item.task.id}-${item.day}`} className="flex min-w-0 items-center gap-1.5">
             <span aria-hidden="true" className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent-blue" />
             <CalendarTaskChip
@@ -59,11 +61,11 @@ export function AgendaDayGroup({ day, items, isToday, colors, onOpenTask, onOpen
           </div>
         ))}
 
-        {timed.length > 0 && dated.length > 0 && (
+        {clocked.length > 0 && untimed.length > 0 && (
           <div className="pt-1 text-caption text-text-secondary">{t('No time')}</div>
         )}
 
-        {dated.map((item) => (
+        {untimed.map((item) => (
           <div key={`${item.task.id}-${item.day}`} className="flex min-w-0 items-center pl-[0.9rem]">
             <CalendarTaskChip
               item={item}
