@@ -44,6 +44,20 @@ describe('parseTimeText', () => {
     expect(parseTimeText(' 9.15 ')).toBe('09:15')
   })
 
+  it('reads a clock typed with full-width characters', () => {
+    // 中文输入法默认打出全角冒号；全角数字与全角字母同样要认。
+    expect(parseTimeText('13：30')).toBe('13:30')
+    expect(parseTimeText('１３：３０')).toBe('13:30')
+    expect(parseTimeText('３．３０')).toBe('03:30')
+    expect(parseTimeText('3：30 ｐｍ')).toBe('15:30')
+  })
+
+  it('reads a full-width clock in a date phrase too', () => {
+    const parsed = parseWhenText('今天 １３：３０', NOW, 'zh-CN')
+    expect(parsed?.value.date).toBe('2026-10-07')
+    expect(parsed?.value.time).toBe('13:30')
+  })
+
   it('rejects what is not a time', () => {
     for (const text of ['', 'noon', '25:00', '13pm', '0am', '10:75', 'tomorrow']) {
       expect(parseTimeText(text), text).toBeNull()

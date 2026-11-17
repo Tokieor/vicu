@@ -81,11 +81,13 @@ export function timeLabel(time: string, fmt: DateFormat): string {
  * Chinese form. Returns "HH:mm" or null.
  */
 export function parseTimeText(text: string, zhGrammar = false): string | null {
+  // 中文输入法打出来的「13：30」是全角冒号，全角数字也一样：先按等值换成半角再读。
+  const normalized = normalizePunctuation(text)
   if (zhGrammar) {
-    const zh = parseZhClock(text)
+    const zh = parseZhClock(normalized)
     if (zh) return zh
   }
-  const match = /^\s*(\d{1,2})(?:[:.h](\d{2}))?\s*([ap])?\.?m?\.?\s*$/i.exec(text)
+  const match = /^\s*(\d{1,2})(?:[:.h](\d{2}))?\s*([ap])?\.?m?\.?\s*$/i.exec(normalized)
   if (!match) return null
   let hour = Number(match[1])
   const minute = match[2] === undefined ? 0 : Number(match[2])
@@ -403,11 +405,15 @@ export function parseWhenText(
 }
 
 /**
- * 全角标点等长换成半角。中文界面的日期文本是「今天，10月7日，13:00」，
+ * 全角标点与全角数字等长换成半角。中文界面的日期文本是「今天，10月7日，13:00」，
  * 中文解析器与 chrono 都只认半角分隔符；等长替换保证 token 的 start/end 还能对回原文。
+ * U+FF01–U+FF5E 与 ASCII 0x21–0x7E 一一对应（偏移 0xFEE0），汉字不在这个区间，
+ * 所以「１３：３０」「３．３０ ｐｍ」都会变成「13:30」「3.30 pm」。
  */
 function normalizePunctuation(text: string): string {
-  return text.replace(/，/g, ',').replace(/：/g, ':').replace(/\u3000/g, ' ')
+  return text
+    .replace(/[\uFF01-\uFF5E]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0))
+    .replace(/\u3000/g, ' ')
 }
 
 // 中文界面把这三天写成「今天」「明天」「昨天」（date-display 的 WORDS），
