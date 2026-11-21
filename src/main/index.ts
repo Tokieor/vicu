@@ -7,7 +7,7 @@ import { authManager } from './auth/auth-manager'
 import { createTray, destroyTray, hasTray, showTrayHint } from './tray'
 import { returnFocusToPreviousWindow, destroyDummyWindow } from './focus'
 import { registerQuickEntryState } from './quick-entry-state'
-import { initNotifications, refreshTaskRemindersOnFocus, rescheduleNotifications, stopNotifications, setNotificationsMainWindow } from './notifications'
+import { initNotifications, refreshTaskRemindersOnFocus, rescheduleNotifications, stopNotifications, setNotificationsMainWindow, setNotificationsWindowRecreate } from './notifications'
 import { getObsidianContext, getForegroundProcessName, getForegroundWindowHandle, prewarmForegroundCheck, rememberShownObsidianContext, type ObsidianNoteContext } from './obsidian-client'
 import { foregroundNeeds, lookUpForeground } from './quick-entry/foreground-gate'
 import { getBrowserContext, type BrowserContext } from './browser-client'
@@ -359,13 +359,14 @@ function setViewerHeight(height: number): void {
 // --- Main window reveal ---
 // 托盘「Show Vicu」、第二次启动和应用内全局快捷键都走这里：窗口被隐藏到托盘就显示，
 // 被最小化就还原，已经被关掉（托盘还留着，例如快速录入在跑）就重新建一个。
-function revealMainWindow(): void {
+function revealMainWindow(): BrowserWindow | null {
   if (!mainWindow || mainWindow.isDestroyed()) {
     mainWindow = createAndWireMainWindow(loadConfig())
   }
   mainWindow.show()
   if (mainWindow.isMinimized()) mainWindow.restore()
   mainWindow.focus()
+  return mainWindow
 }
 
 // --- Shortcut registration ---
@@ -919,7 +920,9 @@ if (!gotLock) {
     handleTrusted('window-close', () => mainWindow?.close())
     handleTrusted('window-is-maximized', () => mainWindow?.isMaximized() ?? false)
 
-    // Initialize notification scheduler
+    // Initialize notification scheduler. The recreate hook is what makes a toast click work after
+    // the window was closed while the process stayed alive (close to tray / quick entry).
+    setNotificationsWindowRecreate(() => revealMainWindow())
     initNotifications(mainWindow)
     powerMonitor.on('resume', () => {
       // The main window's timers (midnight, polling) may have been paused by sleep.

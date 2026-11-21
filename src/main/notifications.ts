@@ -13,6 +13,7 @@ import { effectivePermission } from '../shared/collaboration'
 import { getAllStandaloneTasks } from './cache'
 import { getOfflineQueue } from './offline/service'
 import { createTaskReminderScheduler } from './task-reminders'
+import { createWindowActivator } from './notification-activation'
 import { notificationCategory, notificationFilters, overdueDays } from './notification-windows'
 import { addLocalDays, startOfLocalDay, toLocalDate } from '../shared/due-dates'
 import { isSharedRoutine, parseRoutineEnvelope, routineOccurrenceKey, scheduledDateOn, type RoutinePayload } from '../shared/routines'
@@ -31,8 +32,9 @@ let routineRefreshTimerId: ReturnType<typeof setTimeout> | null = null
 
 const routineReminderTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-// Reference to main window (set during init)
-let mainWindowRef: BrowserWindow | null = null
+// Reference to main window (set during init). Toast clicks go through the activator, which knows
+// how to bring the window back after the user closed it while the process kept running.
+const windowActivator = createWindowActivator()
 
 /** The user completed or deleted the task here and the offline queue has not told the server yet. */
 function isClosedLocally(taskId: number): boolean {
@@ -71,7 +73,7 @@ function attachNotificationDiagnostics(notification: Notification, context: stri
 // --- Public API ---
 
 export function initNotifications(mainWindow: BrowserWindow | null): void {
-  mainWindowRef = mainWindow
+  windowActivator.setWindow(mainWindow)
   scheduleAll()
   taskReminders.start()
   refreshRoutineReminders()
@@ -81,7 +83,15 @@ export function initNotifications(mainWindow: BrowserWindow | null): void {
 
 /** Update the main-window ref after a recreation without rescheduling timers. */
 export function setNotificationsMainWindow(mainWindow: BrowserWindow | null): void {
-  mainWindowRef = mainWindow
+  windowActivator.setWindow(mainWindow)
+}
+
+/**
+ * 告诉通知层「窗口被关掉后怎么重建」。index.ts 拥有那条路径（读配置、重挂事件），
+ * 通知层只在点击时回调它 —— 没有这一步，关闭到托盘后点通知就是死点（D-NOTIF-4）。
+ */
+export function setNotificationsWindowRecreate(recreate: (() => BrowserWindow | null) | null): void {
+  windowActivator.setRecreate(recreate)
 }
 
 export function rescheduleNotifications(): void {
@@ -193,6 +203,10 @@ export function sendTestNotification(): void {
     icon: getIcon(),
   })
   attachNotificationDiagnostics(notification, 'test notification')
+  // 测试通知也要能被点：用户拿它验证的就是「点了会不会回到软件」。
+  notification.on('click', () => {
+    windowActivator.activate()
+  })
   notification.show()
 }
 
@@ -213,8 +227,8 @@ export function notifyTaskSavedFromQuickEntry(task: { title: string; dueDate: st
   })
   attachNotificationDiagnostics(notification, `quick entry saved (${task.taskId ?? 'queued'})`)
   notification.on('click', () => {
-    showMainWindow()
-    if (task.taskId !== null) mainWindowRef?.webContents.send('navigate-to-task', task.taskId)
+    if (task.taskId !== null) windowActivator.navigate('navigate-to-task', task.taskId)
+    else windowActivator.activate()
   })
   notification.show()
 }
@@ -246,8 +260,7 @@ function schedulePlannerNudge(): void {
       })
       attachNotificationDiagnostics(notification, 'plan nudge')
       notification.on('click', () => {
-        showMainWindow()
-        mainWindowRef?.webContents.send('navigate', '/plan')
+        windowActivator.navigate('navigate', '/plan')
       })
       notification.show()
     }
@@ -357,8 +370,7 @@ async function fireRoutineReminder(
   })
   attachNotificationDiagnostics(notification, `routine reminder (${definition.id})`)
   notification.on('click', () => {
-    showMainWindow()
-    mainWindowRef?.webContents.send('navigate', '/routines')
+    windowActivator.navigate('navigate', '/routines')
   })
   notification.show()
 }
@@ -384,8 +396,7 @@ function fireTaskReminder(taskId: number, title: string, configSnapshot: AppConf
   attachNotificationDiagnostics(notification, `task reminder (${taskId})`)
 
   notification.on('click', () => {
-    showMainWindow()
-    mainWindowRef?.webContents.send('navigate-to-task', taskId)
+    windowActivator.navigate('navigate-to-task', taskId)
   })
 
   notification.show()
@@ -603,10 +614,8 @@ function showTaskNotification(task: TaskInfo, config: AppConfig): void {
   attachNotificationDiagnostics(notification, `task notification (${task.id ?? 'unknown'})`)
 
   notification.on('click', () => {
-    showMainWindow()
-    if (typeof task.id === 'number') {
-      mainWindowRef?.webContents.send('navigate-to-task', task.id)
-    }
+    if (typeof task.id === 'number') windowActivator.navigate('navigate-to-task', task.id)
+    else windowActivator.activate()
   })
 
   notification.show()
@@ -633,7 +642,7 @@ function showSummaryNotification(tasks: NotificationTasks, config: AppConfig): v
   attachNotificationDiagnostics(notification, 'summary notification')
 
   notification.on('click', () => {
-    showMainWindow()
+    windowActivator.activate()
   })
 
   notification.show()
@@ -662,13 +671,5 @@ function getIcon(): Electron.NativeImage | undefined {
     return icon.isEmpty() ? undefined : icon
   } catch {
     return undefined
-  }
-}
-
-function showMainWindow(): void {
-  if (mainWindowRef && !mainWindowRef.isDestroyed()) {
-    mainWindowRef.show()
-    if (mainWindowRef.isMinimized()) mainWindowRef.restore()
-    mainWindowRef.focus()
   }
 }
