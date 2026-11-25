@@ -1,15 +1,20 @@
-# macOS CI Build
+# macOS CI Build — Vicu
 #
-# Builds and packages Vicu for macOS on every push to main, PRs targeting main,
-# and manual triggers. Produces unsigned .dmg artifact for Apple Silicon (arm64).
+# 产出：arm64 与 x64 两个未签名 .dmg（没有配置证书时）。有证书/Apple ID 时会自动签名+公证。
 #
-# Required secrets (optional — builds work without them):
-#   BUILD_CERTIFICATE_BASE64  - Base64-encoded .p12 signing certificate
-#   P12_PASSWORD              - Password for the .p12 certificate
-#   KEYCHAIN_PASSWORD         - Temporary keychain password (any random string)
-#   APPLE_ID                  - Apple ID email for notarization
-#   APPLE_ID_PASSWORD         - App-specific password for notarization
-#   APPLE_TEAM_ID             - Apple Developer Team ID
+# 可选 secrets（不配也能跑，只是产物未签名）：
+#   BUILD_CERTIFICATE_BASE64   Developer ID Application 证书的 .p12，base64 编码
+#   P12_PASSWORD               证书密码
+#   KEYCHAIN_PASSWORD          临时钥匙串密码（随便一串随机字符）
+#   APPLE_ID                   Apple ID 邮箱
+#   APPLE_APP_SPECIFIC_PASSWORD Apple ID 的 App 专用密码
+#   APPLE_TEAM_ID              Team ID
+#
+# 与原版 .github/workflows/build-macos.yml 的差异：
+#   1. matrix 增加 x64（Intel Mac 装不上纯 arm64 的包）
+#   2. 打包前补上 npm run voice:helper（否则 macOS 语音输入会报 "Voice input is not part of this build"）
+#   3. speech:lib 显式按矩阵架构交叉编译（arm64 跑在 macos-15 上，x64 是交叉编译）
+#   4. 证书相关 env 提到 workflow 级，if 判断才可靠
 
 name: Build macOS
 
@@ -20,9 +25,27 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+  P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+  KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+  APPLE_ID: ${{ secrets.APPLE_ID }}
+  APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+  APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
 jobs:
   build-macos:
+    # macos-15 目前是 arm64 机器；x64 包在这里交叉编译（Electron 会下载 x64 运行时，
+    # CMake 用 CMAKE_OSX_ARCHITECTURES=x86_64，koffi 自带 x64 预编译产物）。
     runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [arm64, x64]
 
     steps:
       - uses: actions/checkout@v4
@@ -36,16 +59,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/Library/Caches/electron
-          key: electron-arm64-${{ hashFiles('package-lock.json') }}
+          key: electron-${{ matrix.arch }}-${{ hashFiles('package-lock.json') }}
           restore-keys: |
-            electron-arm64-
+            electron-${{ matrix.arch }}-
 
-      - name: Import signing certificate
+      - name: Import signing certificate (optional)
         if: env.BUILD_CERTIFICATE_BASE64 != ''
-        env:
-          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
-          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
@@ -68,35 +87,39 @@ jobs:
       - name: Test
         run: npm test
 
-      - name: Build app
+      - name: Build renderer and main process
         run: npm run build
 
-      # The local speech engine (docs/ai-assistant-v1.md section 3), built with CMake into resources/speech/.
-      - name: Build the speech library
-        run: npm run speech:lib
+      # 本地语音引擎（whisper.cpp），按矩阵架构交叉编译到 resources/speech/
+      - name: Build speech library (${{ matrix.arch }})
+        run: npm run speech:lib -- --arch ${{ matrix.arch }}
 
-      - name: Package macOS (arm64)
+      # macOS 语音助手（Swift，universal binary），输出到 resources/voice/vicu-speech-macos
+      - name: Build macOS speech helper
+        run: npm run voice:helper
+
+      - name: Package DMG (${{ matrix.arch }})
         timeout-minutes: 30
         env:
-          CSC_IDENTITY_AUTO_DISCOVERY: ${{ secrets.BUILD_CERTIFICATE_BASE64 != '' && 'true' || 'false' }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: npx electron-builder --mac --arm64 --publish never
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ env.BUILD_CERTIFICATE_BASE64 != '' && 'true' || 'false' }}
+        run: npx electron-builder --mac --${{ matrix.arch }} --publish never
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
         with:
-          name: vicu-macos-arm64-dmg
+          name: vicu-macos-${{ matrix.arch }}-dmg
           path: dist/*.dmg
-          if-no-files-found: warn
+          if-no-files-found: error
 
-      - name: Upload ZIP artifact
+      - name: Upload unpacked app (for debugging)
+        if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: vicu-macos-arm64-zip
-          path: dist/*.zip
-          if-no-files-found: warn
+          name: vicu-macos-${{ matrix.arch }}-debug
+          path: |
+            dist/*.log
+            dist/mac*/**
+          if-no-files-found: ignore
 
       - name: Cleanup keychain
         if: always()

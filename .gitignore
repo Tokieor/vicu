@@ -18,3 +18,6 @@ resources/voice/vicu-speech-macos
 # Built by scripts/build-speech.mjs (npm run speech:lib)
 resources/speech/
 .speech-build/
+
+# AppleDouble 文件（SMB 卷上 macOS 生成）
+._*
