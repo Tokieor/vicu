@@ -104,11 +104,13 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ env.BUILD_CERTIFICATE_BASE64 != '' && 'true' || 'false' }}
         run: npx electron-builder --mac --${{ matrix.arch }} --publish never
 
+      # electron-builder.yml 的 mac.target 写死了 arch: [arm64]，命令行再给 --x64 时两个架构都会
+      # 打一遍。这里只上传本矩阵对应的那一个 dmg，另一个是顺带产物（其语音引擎 dylib 架构不对）。
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
         with:
           name: vicu-macos-${{ matrix.arch }}-dmg
-          path: dist/*.dmg
+          path: dist/*-${{ matrix.arch }}.dmg
           if-no-files-found: error
 
       - name: Upload unpacked app (for debugging)
