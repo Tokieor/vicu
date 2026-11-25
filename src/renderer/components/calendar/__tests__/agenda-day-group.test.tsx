@@ -2,13 +2,20 @@
 // clock belong under the "No time" heading (docs/calendar-views-plan.md 3.3).
 
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { AgendaDayGroup } from '../AgendaDayGroup'
 import { t } from '@/lib/i18n'
+import { setDateFormat } from '@/lib/date-format'
+import type { DateFormat } from '@/lib/date-display'
 import { calendarIndex, itemsOn } from '@/lib/calendar-items'
 import { dateOnlyDue } from '../../../../shared/due-dates'
 import { atClock } from '../../../../shared/time-blocks'
 import type { Task } from '@/lib/vikunja-types'
+
+// The clock a row prints follows the reader's 12/24 hour setting, which outside the app is the
+// test runner's own language (en-US, 12-hour). Pin a 24-hour clock so the expectations below read
+// the times the plan talks about: an 11:00 due date, a 14:00 block.
+const GB: DateFormat = { locale: 'en-GB', hour12: false }
 
 function row(fields: Record<string, unknown>): Task {
   return {
@@ -54,6 +61,8 @@ function markup(): string {
 }
 
 describe('AgendaDayGroup', () => {
+  beforeEach(() => setDateFormat(GB))
+
   it('puts the 11:00 due date before the 14:00 block', () => {
     const html = markup()
     expect(html.indexOf('11:00')).toBeGreaterThanOrEqual(0)
