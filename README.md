@@ -1,5 +1,9 @@
 # Vicu
 
+> **本仓库是 [rendyhd/Vicu](https://github.com/rendyhd/Vicu) 的修改版**（中文化、日历视图、全局快捷键等），遵循 MIT 许可证，与原项目及其作者无隶属关系。上游的问题请反馈给原项目。
+>
+> **This repository is a modified version of [rendyhd/Vicu](https://github.com/rendyhd/Vicu)** (Chinese localisation, calendar views, global shortcuts, and more), distributed under the MIT licence. It is not affiliated with the original project or its author. Please report upstream bugs to the original project.
+
 **From a thought to done, on every device.** Vicu is a calm, fast task manager for your own [Vikunja](https://vikunja.io/) server. Catch a task from any app in two seconds, plan your day in Today, and pick up on your phone where your desktop left off.
 
 **[vicutodo.app](https://vicutodo.app/)** · [Download for desktop](https://github.com/rendyhd/Vicu/releases/latest) · [Vicu for Android and iOS](https://github.com/rendyhd/Vicu-Mobile)
