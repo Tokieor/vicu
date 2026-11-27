@@ -1547,6 +1547,7 @@ export const ZH: Record<string, string> = {
   "Too many images to save offline (limit {0})": "离线保存的图片过多（上限 {0} 张）",
   "Tool call": "工具调用",
   "Top level": "顶层",
+  "Track what you do regularly, like taking vitamins or watering the plants, without turning it into an endless pile of recurring tasks.": "记录你经常做的事，比如吃维生素或浇花，而不用把它堆成无穷无尽的重复任务。",
   "Try adjusting the list filters": "试试调整列表筛选条件",
   "Try again": "重试",
   "Try it": "试一试",
