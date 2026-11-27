@@ -836,11 +836,11 @@ export function AppShell() {
           <WindowControls />
         </header>
 
-        {/* Sidebar — bg extends behind drag region */}
+        {/* Sidebar — bg extends behind drag region；整块禁止框选，只有输入框里的文字可以选中 */}
         <aside
           aria-label="Sidebar"
           ref={sidebarRef}
-          className="flex shrink-0 flex-col overflow-hidden border-r border-[var(--border-color)] bg-[var(--bg-sidebar)]"
+          className="flex shrink-0 select-none flex-col overflow-hidden border-r border-[var(--border-color)] bg-[var(--bg-sidebar)] [&_[contenteditable]]:select-text [&_input]:select-text [&_textarea]:select-text"
           style={{ width: sidebarWidth }}
         >
           <div className="h-8 shrink-0" />
