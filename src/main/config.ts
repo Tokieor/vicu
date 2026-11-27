@@ -41,6 +41,7 @@ const DEFAULT_CONFIG: AppConfig = {
   clock_format: 'system',
   row_density: 'compact',
   subtask_display: 'inside_task',
+  show_completed_tasks: false,
   review: {
     enabled: true,
     default_cadence_days: 14,
@@ -248,6 +249,8 @@ export function normalizeConfig(raw: Record<string, unknown>): AppConfig {
     nlp_syntax_mode: raw.nlp_syntax_mode === 'vikunja' || raw.nlp_syntax_mode === 'zh' ? raw.nlp_syntax_mode : 'todoist',
     confirm_before_delete: raw.confirm_before_delete !== false,
     subtask_display: raw.subtask_display === 'expandable' ? 'expandable' : 'inside_task',
+    // 已完成任务是否留在项目列表末尾：默认关，只有明确写 true 才开。
+    show_completed_tasks: raw.show_completed_tasks === true,
     // Task completion sound
     task_completion_sound_enabled: raw.task_completion_sound_enabled !== false,
     task_completion_sound_path: typeof raw.task_completion_sound_path === 'string'

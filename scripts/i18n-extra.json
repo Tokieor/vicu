@@ -855,5 +855,7 @@
   "End time": "结束时间",
   "Day view": "日",
   "The end is the due date. Tap a field to set its day and time.": "结束日期就是截止日期。点一下某一头，再选它的日期和时刻。",
-  "Track what you do regularly, like taking vitamins or watering the plants, without turning it into an endless pile of recurring tasks.": "记录你经常做的事，比如吃维生素或浇花，而不用把它堆成无穷无尽的重复任务。"
+  "Track what you do regularly, like taking vitamins or watering the plants, without turning it into an endless pile of recurring tasks.": "记录你经常做的事，比如吃维生素或浇花，而不用把它堆成无穷无尽的重复任务。",
+  "Finished tasks stay at the end of a project’s own list, struck through. A subproject lists its own.": "已完成的任务留在本项目列表末尾，标题带删除线；子项目的已完成任务留在子项目自己的列表里。",
+  "Only the {0} most recent are shown": "只显示最近 {0} 条"
 }

@@ -3,7 +3,16 @@ import { api } from './api'
 import { useOfflineStore } from '@/stores/offline-store'
 
 /** Every cached query that holds tasks or something derived from them (the sidebar's done counts). */
-export const TASK_QUERY_KEYS: readonly QueryKey[] = [['tasks'], ['view-tasks'], ['section-tasks'], ['task-detail'], ['project-counts']]
+export const TASK_QUERY_KEYS: readonly QueryKey[] = [
+  ['tasks'],
+  ['view-tasks'],
+  // The completed section at the end of a project's list (setting `show_completed_tasks`); a project
+  // view mounts it, nothing else does, so this is a no-op everywhere else.
+  ['view-tasks-done'],
+  ['section-tasks'],
+  ['task-detail'],
+  ['project-counts'],
+]
 
 /** Plus what depends on the date: carriers behind the routines list. */
 export const DATE_QUERY_KEYS: readonly QueryKey[] = [...TASK_QUERY_KEYS, ['routines']]

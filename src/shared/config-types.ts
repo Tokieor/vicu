@@ -367,6 +367,11 @@ export interface AppConfig {
   confirm_before_delete?: boolean
   // Subtask presentation in task lists
   subtask_display?: 'inside_task' | 'expandable'
+  /**
+   * Finished tasks stay at the end of a project's list, struck through (off by default). A project
+   * shows only its own: the tasks of a subproject are in the subproject's own list.
+   */
+  show_completed_tasks?: boolean
   // Task completion sound
   task_completion_sound_enabled?: boolean
   task_completion_sound_path?: string | null

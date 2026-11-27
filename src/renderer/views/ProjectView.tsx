@@ -4,6 +4,7 @@ import { useDndMonitor } from '@dnd-kit/core'
 import { SortableContext } from '@dnd-kit/sortable'
 import { verticalListSortingStrategyForeignSafe } from '@/lib/sortable-strategy'
 import { useProjectTasks } from '@/hooks/use-project-tasks'
+import { useProjectCompletedTasks } from '@/hooks/use-project-completed-tasks'
 import { useProjectSections, type SectionData } from '@/hooks/use-project-sections'
 import { useProjects } from '@/hooks/use-projects'
 import { useReorderStore } from '@/stores/reorder-store'
@@ -12,6 +13,7 @@ import type { Task, Project } from '@/lib/vikunja-types'
 import { TaskList } from '@/components/task-list/TaskList'
 import { SectionGroup } from '@/components/task-list/SectionGroup'
 import { AddSectionButton } from '@/components/task-list/AddSectionButton'
+import { CompletedTasksSection } from '@/components/task-list/CompletedTasksSection'
 import { ParentDropZone } from '@/components/task-list/ParentDropZone'
 import { RowViewProvider } from '@/components/task-list/RowViewContext'
 import { ListSkeleton } from '@/components/shared/ListSkeleton'
@@ -59,6 +61,8 @@ export function ProjectView() {
 
   const { data: tasks = [], isLoading: tasksLoading, viewId, order: taskOrder } = useProjectTasks(activeProject?.id)
   const { sections, hasSections, isLoading: sectionsLoading } = useProjectSections(pid)
+  // The setting's section at the end of the list: this project's own finished tasks only.
+  const completed = useProjectCompletedTasks(activeProject?.id, viewId, tasks)
   const setReorderContext = useReorderStore((s) => s.setReorderContext)
   const clearSectionContexts = useReorderStore((s) => s.clearSectionContexts)
 
@@ -246,6 +250,7 @@ export function ProjectView() {
         )}
         <AddSectionButton parentProjectId={pid} siblings={sectionProjects} index={sectionProjects.length} />
       </div>
+      <CompletedTasksSection tasks={completed.rows} hasMore={completed.hasMore} />
     </TaskList>
     </RowViewProvider>
   )

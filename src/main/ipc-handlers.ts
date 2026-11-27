@@ -225,6 +225,8 @@ const QUIET_PATCH_KEYS: ReadonlySet<string> = new Set([
   'update_check_dismissed_version',
   'quick_entry_position',
   'quick_view_position',
+  // 只改列表怎么画，不牵动徽章、快速查看或自定义列表同步。
+  'show_completed_tasks',
 ])
 
 // Shared tail of every renderer-driven config write: keep the API token out of

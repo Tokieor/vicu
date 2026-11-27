@@ -166,6 +166,23 @@ the status: overdue `status.overdue`, due today `status.today`, anything else `t
 A done row shows the check and a struck title. States: hover
 `bg.hover`, selected `bg.selected`, keyboard focus `focus.ring`.
 
+### 4.2 Completed tasks at the end of a project's list
+
+Off by default (`show_completed_tasks`, a setting per device, Preferences > Show completed tasks).
+On, a project page ends with a "Completed" section: ordinary rows, struck through, newest completion
+first, under a section header carrying their count. They are not draggable and stay out of the list's
+order; checking one again reopens it and it joins the open rows above.
+
+- **Own tasks only.** The section holds the project's own finished tasks; a subproject's are in the
+  subproject's own page, never here.
+- **How many.** The newest 50, with "Only the 50 most recent are shown" under them when the project
+  has more. The Logbook is where the whole history is read.
+- **Not twice.** A row completed a moment ago is still held in the list by the completion hold
+  (`cross-app-semantics-v1.md` section 7): it joins the section when the hold lets it go. A finished
+  subtask drawn under an open parent (expandable subtasks) stays under that parent.
+- The empty state above it still says the project has no open task, and its "Add task" stays the
+  first thing in the pane.
+
 ## 5. Headers
 
 - Page title: `pageTitle` (desktop 26 px bold; Android 28 sp bold in a large top app bar that

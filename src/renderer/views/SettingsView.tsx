@@ -606,6 +606,21 @@ export function SettingsView() {
               </select>
             </label>
 
+            <label className="flex cursor-pointer items-start gap-2">
+              <Checkbox
+                className="mt-0.5"
+                checked={fullConfig?.show_completed_tasks === true}
+                onChange={(e) => handleQuickEntryChange({ show_completed_tasks: e.target.checked })}
+              />
+              <div>
+                <span className="block text-sm text-[var(--text-primary)]">Show completed tasks</span>
+                <p className="text-xs text-[var(--text-secondary)]">
+                  Finished tasks stay at the end of a project&rsquo;s own list, struck through. A
+                  subproject lists its own.
+                </p>
+              </div>
+            </label>
+
             <label className="flex cursor-pointer items-center gap-2">
               <Checkbox
                 checked={fullConfig?.show_today_overdue_badge === true}

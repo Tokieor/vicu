@@ -703,6 +703,8 @@ export function useCompleteTask() {
     },
     onSuccess: () => {
       playCompletionSound()
+      // 完成时列表本身不重取（行靠完成保持留在原位），但项目末尾的已完成区要收下这一条。
+      refreshTasks(qc, [['view-tasks-done']])
     },
     onError: (_err, input, context) => {
       const task = 'task' in input ? input.task : input

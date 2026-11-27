@@ -43,6 +43,7 @@ describe('handleReplayed', () => {
     expect(invalidate.mock.calls.map((c) => (c[0] as { queryKey: unknown[] }).queryKey)).toEqual([
       ['tasks'],
       ['view-tasks'],
+      ['view-tasks-done'],
       ['section-tasks'],
       ['task-detail'],
       ['project-counts'],
